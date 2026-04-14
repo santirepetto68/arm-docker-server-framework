@@ -1,0 +1,43 @@
+services:
+  ark-install:
+    image: ${INSTALL_IMAGE}
+    container_name: ${COMPOSE_PROJECT_NAME:-arksearm}_install
+    restart: "no"
+    env_file:
+      - .env
+    working_dir: /mnt/server
+    entrypoint: ["/bin/bash", "/project/scripts/install.sh"]
+    volumes:
+      - ./data/server:/mnt/server
+      - ./scripts:/project/scripts:ro
+      - ./config:/project/config:ro
+
+  ark:
+    image: ${RUNTIME_IMAGE}
+    container_name: ${COMPOSE_PROJECT_NAME:-arksearm}_server
+    depends_on:
+      ark-install:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    env_file:
+      - .env
+    working_dir: /mnt/server
+    init: true
+    stop_grace_period: 5m
+    ports:
+      - "${SERVER_PORT}:${SERVER_PORT}/udp"
+      - "${RAW_SOCKET_PORT}:${RAW_SOCKET_PORT}/udp"
+      - "${QUERY_PORT}:${QUERY_PORT}/udp"
+      - "${RCON_PORT}:${RCON_PORT}/tcp"
+    volumes:
+      - ./data/server:/mnt/server
+      - ./scripts:/project/scripts:ro
+      - ./config:/project/config:ro
+      - ./backups:/backups
+    entrypoint: ["/bin/bash", "/project/scripts/start.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "rcon -a 127.0.0.1:${RCON_PORT} -p ${ARK_ADMIN_PASSWORD} -c listplayers >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 8m

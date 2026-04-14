@@ -1,0 +1,6 @@
+.env
+install_log.txt
+temp/
+backups/*.tar.gz
+data/server/*
+!data/server/.gitkeep
