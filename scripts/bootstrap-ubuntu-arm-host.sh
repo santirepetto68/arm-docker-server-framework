@@ -24,6 +24,22 @@ if [[ "$ARCH" != "aarch64" ]]; then
   exit 1
 fi
 
+detect_box_cmake_flags() {
+  local model=""
+  if [[ -f /proc/device-tree/model ]]; then
+    model="$(tr -d '\0' < /proc/device-tree/model)"
+  fi
+  case "$model" in
+    *"Raspberry Pi 5"*) echo "-DRPI5ARM64=1" ;;
+    *"Raspberry Pi 4"*) echo "-DRPI4ARM64=1" ;;
+    *"Raspberry Pi 3"*) echo "-DRPI3ARM64=1" ;;
+    *)                  echo "-DARM64=1" ;;
+  esac
+}
+
+BOX_CMAKE_FLAGS="$(detect_box_cmake_flags)"
+echo "Detected cmake flags: ${BOX_CMAKE_FLAGS}"
+
 TEMP_DIR="$(pwd)/temp"
 echo "Creating temporary directory: $TEMP_DIR"
 mkdir -p "$TEMP_DIR"
@@ -40,7 +56,7 @@ echo "Cloning and building box86"
 git clone https://github.com/ptitSeb/box86
 cd box86
 mkdir build && cd build
-cmake .. -DRPI4ARM64=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake .. ${BOX_CMAKE_FLAGS} -DCMAKE_BUILD_TYPE=RelWithDebInfo
 make -j"$NUM_JOBS"
 sudo make install
 sudo systemctl restart systemd-binfmt
@@ -53,7 +69,7 @@ echo "Cloning and building box64"
 git clone https://github.com/ptitSeb/box64
 cd box64
 mkdir build && cd build
-cmake .. -DRPI4ARM64=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake .. ${BOX_CMAKE_FLAGS} -DCMAKE_BUILD_TYPE=RelWithDebInfo
 make -j"$NUM_JOBS"
 sudo make install
 sudo systemctl restart systemd-binfmt

@@ -5,11 +5,15 @@ services:
     restart: "no"
     env_file:
       - .env
+    environment:
+      - TZ=${TZ:-UTC}
+      - GAME_ID=${GAME_ID:-ark-se}
     working_dir: /mnt/server
-    entrypoint: ["/bin/bash", "/project/scripts/install.sh"]
+    entrypoint: ["/bin/bash", "/project/scripts/install-game.sh"]
     volumes:
       - ./data/server:/mnt/server
       - ./scripts:/project/scripts:ro
+      - ./games/ark-se:/project/game:ro
       - ./config:/project/config:ro
 
   ark:
@@ -21,6 +25,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - TZ=${TZ:-UTC}
+      - GAME_ID=${GAME_ID:-ark-se}
     working_dir: /mnt/server
     init: true
     stop_grace_period: 5m
@@ -32,11 +39,12 @@ services:
     volumes:
       - ./data/server:/mnt/server
       - ./scripts:/project/scripts:ro
+      - ./games/ark-se:/project/game:ro
       - ./config:/project/config:ro
       - ./backups:/backups
-    entrypoint: ["/bin/bash", "/project/scripts/start.sh"]
+    entrypoint: ["/bin/bash", "/project/scripts/start-game.sh"]
     healthcheck:
-      test: ["CMD-SHELL", "rcon -a 127.0.0.1:${RCON_PORT} -p ${ARK_ADMIN_PASSWORD} -c listplayers >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "/bin/bash /project/game/healthcheck.sh"]
       interval: 30s
       timeout: 10s
       retries: 10
