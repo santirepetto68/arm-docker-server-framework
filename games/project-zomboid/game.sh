@@ -59,6 +59,17 @@ build_startup_command() {
   # empty and all JVM + PZ args go through STARTUP_FLAGS.
   STARTUP_CMD=""
 
+  # JVM_INTERPRET_ONLY=1 disables the JIT entirely (-Xint). Much slower, but
+  # a diagnostic: box64's dynarec has repeatedly miscompiled C1-JIT'd code
+  # (String.getBytes, jassimp.AiNodeAnim.getNumScaleKeys). If the server runs
+  # with -Xint, the crashes were JIT-dynarec interaction, not JNI/native libs.
+  JIT_FLAGS=()
+  if is_true "${JVM_INTERPRET_ONLY:-0}"; then
+    JIT_FLAGS=("-Xint")
+  else
+    JIT_FLAGS=("-XX:TieredStopAtLevel=1")
+  fi
+
   STARTUP_FLAGS=(
     # --- JVM flags tuned for box64 (matches Dyarven's working config) ---
     "-Djava.awt.headless=true"
@@ -71,11 +82,8 @@ build_startup_command() {
     "-Djava.security.egd=file:/dev/urandom"
     "-XX:+UseSerialGC"
     "-XX:-UseCompressedOops"
-    # Also disable compressed class pointers. A SIGSEGV inside C1-compiled
-    # String.getBytes pointed at UseCompressedClassPointers in the dynarec'd
-    # code — box64 mistranslates the class-pointer compression check.
     "-XX:-UseCompressedClassPointers"
-    "-XX:TieredStopAtLevel=1"
+    "${JIT_FLAGS[@]}"
     # Classpath: include all jars in java/ (Guava, Steamworks4J, trove, etc.)
     # plus projectzomboid.jar. Dyarven's script uses just `java/:java/projectzomboid.jar`
     # but that relies on their java/ dir being flat-extracted; our SteamCMD install
