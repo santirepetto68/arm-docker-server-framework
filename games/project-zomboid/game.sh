@@ -71,6 +71,10 @@ build_startup_command() {
     "-Djava.security.egd=file:/dev/urandom"
     "-XX:+UseSerialGC"
     "-XX:-UseCompressedOops"
+    # Also disable compressed class pointers. A SIGSEGV inside C1-compiled
+    # String.getBytes pointed at UseCompressedClassPointers in the dynarec'd
+    # code — box64 mistranslates the class-pointer compression check.
+    "-XX:-UseCompressedClassPointers"
     "-XX:TieredStopAtLevel=1"
     # Classpath: include all jars in java/ (Guava, Steamworks4J, trove, etc.)
     # plus projectzomboid.jar. Dyarven's script uses just `java/:java/projectzomboid.jar`
