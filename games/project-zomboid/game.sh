@@ -27,45 +27,40 @@ JVM_XMS="${JVM_XMS:-4g}"
 JVM_XMX="${JVM_XMX:-8g}"
 
 build_startup_command() {
+  # Match the working arm64 script's env as closely as possible. Credit:
+  # github.com/Dyarven/zomboid-server-on-arm.
+  #
+  # Notable differences from the working setup that we deliberately keep:
+  #  - cachedir stays at /mnt/server/.cache so config/saves live on the
+  #    bind-mounted volume instead of a container-local $HOME.
+  #  - We still export HOME so PZ's internal "where do I put Zomboid/"
+  #    logic has something to anchor to.
   export HOME="/mnt/server"
 
-  # Pre-create every directory PZ enumerates on startup. SteamWorkshop
-  # .getStageFolders() calls closedir() on an empty-or-missing directory,
-  # which under box64 segfaults in native libc (crash stack bottoms out in
-  # sun.nio.fs.UnixNativeDispatcher.closedir with si_addr=0x10). Creating
-  # the dirs up front keeps the dynarec off that code path entirely.
+  # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup
+  # and closedir() on a missing dir crashes under box64.
   mkdir -p /mnt/server/.cache/mods \
            /mnt/server/.cache/Workshop \
            /mnt/server/steamapps/workshop/content/108600
 
-  # box64 tuning for the JVM. These make the difference between "crashes in
-  # the JIT" and "runs". Documented in box64's README under JVM workloads.
+  # box64 env that matches the Dyarven systemd unit verbatim. Don't add
+  # BOX64_DYNAREC_SAFEFLAGS / BOX64_ALLOWMISSINGLIBS / BOX64_EMULATED_LIBS
+  # here — the working script doesn't use them and adding them has been
+  # making things worse, not better.
   export BOX64_JVM=1
   export BOX64_DYNAREC_BIGBLOCK=0
   export BOX64_DYNAREC_STRONGMEM=1
 
-  # Emulate x86 FLAGS semantics precisely around syscalls. Slower but avoids
-  # the readdir/closedir null-handle crash we hit when enumerating empty
-  # Workshop dirs.
-  #export BOX64_DYNAREC_SAFEFLAGS=1
-
-  # Don't bail if a shared lib is missing — harmless message we saw in the
-  # earlier run was PZ speculatively dlopen-ing libSDL3.so.0 (not needed
-  # on a headless server; the dlopen failure itself is non-fatal, this
-  # just suppresses the scary log line).
-  #export BOX64_ALLOWMISSINGLIBS=1
-
-  # JRE + native libs shipped with PZ. Note: deliberately do NOT LD_PRELOAD
-  # libjsig.so — with our JVM flag set it isn't needed, and preloading it
-  # under box64 occasionally trips the dynarec.
-  export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server/jre64/lib:/mnt/server/jre64/lib/server:/mnt/server${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+  # LD_LIBRARY_PATH — mirror the working script exactly. The trailing `.`
+  # (CWD) matters: PZ's native loader looks for some libs relative to CWD.
+  export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server/jre64/lib:."
 
   # We invoke java directly (GAME_BINARY=jre64/bin/java), so STARTUP_CMD stays
   # empty and all JVM + PZ args go through STARTUP_FLAGS.
   STARTUP_CMD=""
 
   STARTUP_FLAGS=(
-    # --- JVM flags tuned for box64 ---
+    # --- JVM flags tuned for box64 (matches Dyarven's working config) ---
     "-Djava.awt.headless=true"
     "-Xms${JVM_XMS}"
     "-Xmx${JVM_XMX}"
@@ -74,17 +69,13 @@ build_startup_command() {
     "-Dzomboid.znetlog=1"
     "-Djava.library.path=linux64/:natives/"
     "-Djava.security.egd=file:/dev/urandom"
-    # SerialGC is the simplest collector and the one that actually survives
-    # box64's dynarec. G1GC and ZGC both crash mid-game under emulation.
     "-XX:+UseSerialGC"
-    # Compressed pointer tricks don't translate cleanly — disable them.
     "-XX:-UseCompressedOops"
-    # Tier 1 = C1 compiler only. C2's aggressive inlining + method handle
-    # machinery is what box64 kept mistranslating.
     "-XX:TieredStopAtLevel=1"
-    # Classpath must include every jar under java/ — PZ ships Guava, Steamworks4J,
-    # TRove4j, etc. as separate jars. The `*` wildcard expands at JVM launch.
-    "-cp" "java/:java/*"
+    # Classpath matches Dyarven's working script exactly. If this produces
+    # a ClassNotFoundError for a Guava/Steamworks4J class, something is
+    # wrong with our java/ dir's contents (verify all jars downloaded).
+    "-cp" "java/:java/projectzomboid.jar"
     "zombie.network.GameServer"
     # --- PZ server args below this line ---
     "-port" "${SERVER_PORT}"
