@@ -62,7 +62,9 @@ build_startup_command() {
     # Tier 1 = C1 compiler only. C2's aggressive inlining + method handle
     # machinery is what box64 kept mistranslating.
     "-XX:TieredStopAtLevel=1"
-    "-cp" "java/:java/projectzomboid.jar"
+    # Classpath must include every jar under java/ — PZ ships Guava, Steamworks4J,
+    # TRove4j, etc. as separate jars. The `*` wildcard expands at JVM launch.
+    "-cp" "java/:java/*"
     "zombie.network.GameServer"
     # --- PZ server args below this line ---
     "-port" "${SERVER_PORT}"
