@@ -53,10 +53,19 @@ if [[ -n "${STEAMCMD_PLATFORM_TYPE:-}" ]]; then
   PLATFORM_ARGS=(+@sSteamCmdForcePlatformType "${STEAMCMD_PLATFORM_TYPE}")
 fi
 
+# Build +login with only the tokens actually supplied. Passing empty "" args
+# trips "Missing configuration" on recent SteamCMD builds when doing anonymous
+# login.
+LOGIN_ARGS=(+login "${STEAM_USER}")
+if [[ "${STEAM_USER}" != "anonymous" ]]; then
+  [[ -n "${STEAM_PASS}" ]] && LOGIN_ARGS+=("${STEAM_PASS}")
+  [[ -n "${STEAM_AUTH}" ]] && LOGIN_ARGS+=("${STEAM_AUTH}")
+fi
+
 ./steamcmd.sh \
   "${PLATFORM_ARGS[@]}" \
   +force_install_dir "${SERVER_DIR}" \
-  +login "${STEAM_USER}" "${STEAM_PASS}" "${STEAM_AUTH}" \
+  "${LOGIN_ARGS[@]}" \
   +app_update "${APP_ID}" ${EXTRA_FLAGS} ${VALIDATE_FLAG} \
   +quit
 
