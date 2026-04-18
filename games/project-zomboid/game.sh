@@ -41,7 +41,8 @@ build_startup_command() {
   # Force box64 to emulate PZ's bundled x86 SDL/libs rather than trying to
   # substitute ARM-native versions we don't have (libSDL3.so.0 in particular —
   # the substitution attempt fails dlopen and the JVM then SIGSEGVs in JNI).
-  export BOX64_EMULATED_LIBS="libSDL3.so.0:libSDL3.so:libSDL2-2.0.so.0:libSDL2.so"
+  # Format: pipe-separated list of lib soname patterns.
+  export BOX64_EMULATED_LIBS="libSDL3.so.0|libSDL3.so|libSDL2-2.0.so.0|libSDL2.so"
 
   # JRE + native libs shipped with PZ. Note: deliberately do NOT LD_PRELOAD
   # libjsig.so — with our JVM flag set it isn't needed, and preloading it
