@@ -17,9 +17,17 @@ fi
 # shellcheck disable=SC1090
 source "${GAME_ENV}"
 
+# Load shared infra vars
 if [[ -f "${ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${ENV_FILE}"
+fi
+
+# Load game-specific instance vars (overrides .env where keys overlap)
+INSTANCE_ENV="${PROJECT_ROOT}/instances/${GAME_ID}.env"
+if [[ -f "${INSTANCE_ENV}" ]]; then
+  # shellcheck disable=SC1090
+  source "${INSTANCE_ENV}"
 fi
 
 BACKUP_DIR="${PROJECT_ROOT}/backups/${GAME_ID}"
@@ -37,7 +45,13 @@ if [[ "${GAME_SHUTDOWN_STRATEGY:-}" == "rcon-then-signal" ]]; then
 
   if [[ -n "${rcon_pass}" ]] && command -v docker >/dev/null 2>&1; then
     COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
-    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" exec -T ark \
+    INSTANCE_ENV_FILE="${PROJECT_ROOT}/instances/${GAME_ID}.env"
+    EXTRA_ENV_ARG=()
+    if [[ -f "${INSTANCE_ENV_FILE}" ]]; then
+      EXTRA_ENV_ARG=(--env-file "${INSTANCE_ENV_FILE}")
+    fi
+    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" "${EXTRA_ENV_ARG[@]}" \
+      exec -T "${GAME_ID}" \
       timeout 5 rcon -a 127.0.0.1:"${rcon_port}" -p "${rcon_pass}" saveworld || true
     sleep 5
   fi

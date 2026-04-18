@@ -1,47 +1,24 @@
 services:
-  ark-install:
+  # ---------------------------------------------------------------------------
+  # Base service definitions (not used directly — extended by per-game services)
+  # ---------------------------------------------------------------------------
+  install:
     image: ${INSTALL_IMAGE}
-    container_name: ${COMPOSE_PROJECT_NAME:-arksearm}_install
     restart: "no"
-    env_file:
-      - .env
     environment:
       - TZ=${TZ:-UTC}
-      - GAME_ID=${GAME_ID:-ark-se}
     working_dir: /mnt/server
     entrypoint: ["/bin/bash", "/project/scripts/install-game.sh"]
-    volumes:
-      - ./data/server:/mnt/server
-      - ./scripts:/project/scripts:ro
-      - ./games/ark-se:/project/game:ro
-      - ./config:/project/config:ro
 
-  ark:
+  server:
     image: ${RUNTIME_IMAGE}
-    container_name: ${COMPOSE_PROJECT_NAME:-arksearm}_server
-    depends_on:
-      ark-install:
-        condition: service_completed_successfully
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       - TZ=${TZ:-UTC}
-      - GAME_ID=${GAME_ID:-ark-se}
     working_dir: /mnt/server
     init: true
     stop_grace_period: 5m
-    ports:
-      - "${SERVER_PORT}:${SERVER_PORT}/udp"
-      - "${RAW_SOCKET_PORT}:${RAW_SOCKET_PORT}/udp"
-      - "${QUERY_PORT}:${QUERY_PORT}/udp"
-      - "${RCON_PORT}:${RCON_PORT}/tcp"
-    volumes:
-      - ./data/server:/mnt/server
-      - ./scripts:/project/scripts:ro
-      - ./games/ark-se:/project/game:ro
-      - ./config:/project/config:ro
-      - ./backups:/backups
+    ports: !reset []
     entrypoint: ["/bin/bash", "/project/scripts/start-game.sh"]
     healthcheck:
       test: ["CMD-SHELL", "/bin/bash /project/game/healthcheck.sh"]
@@ -49,3 +26,86 @@ services:
       timeout: 10s
       retries: 10
       start_period: 8m
+
+  # ---------------------------------------------------------------------------
+  # ARK: Survival Evolved
+  # ---------------------------------------------------------------------------
+  ark-install:
+    extends:
+      service: install
+    container_name: ${COMPOSE_PROJECT_NAME:-gameserver}_ark-se_install
+    env_file:
+      - .env
+      - path: instances/ark-se.env
+        required: false
+    environment:
+      - GAME_ID=ark-se
+    volumes:
+      - ./data/ark-se:/mnt/server
+      - ./scripts:/project/scripts:ro
+      - ./games/ark-se:/project/game:ro
+
+  ark-se:
+    extends:
+      service: server
+    container_name: ${COMPOSE_PROJECT_NAME:-gameserver}_ark-se_server
+    depends_on:
+      ark-install:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+      - path: instances/ark-se.env
+        required: false
+    environment:
+      - GAME_ID=ark-se
+    ports:
+      - "${SERVER_PORT:-7777}:${SERVER_PORT:-7777}/udp"
+      - "${RAW_SOCKET_PORT:-7778}:${RAW_SOCKET_PORT:-7778}/udp"
+      - "${QUERY_PORT:-27015}:${QUERY_PORT:-27015}/udp"
+      - "${RCON_PORT:-27020}:${RCON_PORT:-27020}/tcp"
+    volumes:
+      - ./data/ark-se:/mnt/server
+      - ./scripts:/project/scripts:ro
+      - ./games/ark-se:/project/game:ro
+      - ./backups:/backups
+
+  # ---------------------------------------------------------------------------
+  # Project Zomboid
+  # ---------------------------------------------------------------------------
+  project-zomboid-install:
+    extends:
+      service: install
+    container_name: ${COMPOSE_PROJECT_NAME:-gameserver}_project-zomboid_install
+    env_file:
+      - .env
+      - path: instances/project-zomboid.env
+        required: false
+    environment:
+      - GAME_ID=project-zomboid
+    volumes:
+      - ./data/project-zomboid:/mnt/server
+      - ./scripts:/project/scripts:ro
+      - ./games/project-zomboid:/project/game:ro
+
+  project-zomboid:
+    extends:
+      service: server
+    container_name: ${COMPOSE_PROJECT_NAME:-gameserver}_project-zomboid_server
+    depends_on:
+      project-zomboid-install:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+      - path: instances/project-zomboid.env
+        required: false
+    environment:
+      - GAME_ID=project-zomboid
+    ports:
+      - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/udp"
+      - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/tcp"
+      - "${PZ_STEAM_PORT:-16262}:${PZ_STEAM_PORT:-16262}/udp"
+    volumes:
+      - ./data/project-zomboid:/mnt/server
+      - ./scripts:/project/scripts:ro
+      - ./games/project-zomboid:/project/game:ro
+      - ./backups:/backups

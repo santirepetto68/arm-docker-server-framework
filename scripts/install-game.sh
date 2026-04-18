@@ -43,7 +43,18 @@ log "Running SteamCMD install/update for app ${APP_ID}"
 cd "${STEAMCMD_DIR}"
 export HOME="${SERVER_DIR}"
 
+# Some games (e.g. Project Zomboid) split their install into per-platform depots.
+# Under box64 emulation SteamCMD can misdetect the host platform and skip depots
+# (for PZ this means the bundled jre64/ tree is missing). Allow games to force a
+# specific platform via STEAMCMD_PLATFORM_TYPE in game.env or the instance env.
+PLATFORM_ARGS=()
+if [[ -n "${STEAMCMD_PLATFORM_TYPE:-}" ]]; then
+  log "Forcing SteamCMD platform type: ${STEAMCMD_PLATFORM_TYPE}"
+  PLATFORM_ARGS=(+@sSteamCmdForcePlatformType "${STEAMCMD_PLATFORM_TYPE}")
+fi
+
 ./steamcmd.sh \
+  "${PLATFORM_ARGS[@]}" \
   +force_install_dir "${SERVER_DIR}" \
   +login "${STEAM_USER}" "${STEAM_PASS}" "${STEAM_AUTH}" \
   +app_update "${APP_ID}" ${EXTRA_FLAGS} ${VALIDATE_FLAG} \

@@ -1,6 +1,15 @@
 .env
+instances/*.env
 install_log.txt
 temp/
-backups/*.tar.gz
+
+# Backup archives (keep the directory)
+backups/**/*.tar.gz
+
+# Game server data (large binary files, saves — keep .gitkeep placeholders)
 data/server/*
 !data/server/.gitkeep
+data/ark-se/*
+!data/ark-se/.gitkeep
+data/project-zomboid/*
+!data/project-zomboid/.gitkeep

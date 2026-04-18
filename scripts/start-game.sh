@@ -59,7 +59,23 @@ trap shutdown_server TERM INT
 # Launch server
 cd "${SERVER_DIR}/${GAME_WORKING_DIR}"
 log "Starting ${GAME_NAME} dedicated server"
-./"$(basename "${GAME_BINARY}")" "${STARTUP_CMD}" "${STARTUP_FLAGS[@]}" &
+# Resolve the binary path relative to GAME_WORKING_DIR. ARK uses a
+# `GAME_BINARY` that's inside `GAME_WORKING_DIR`, so basename works. PZ
+# uses `GAME_WORKING_DIR=.` + `GAME_BINARY=jre64/bin/java`, so we need
+# the subpath preserved.
+if [[ "${GAME_WORKING_DIR:-.}" != "." ]]; then
+  BINARY_REL="./$(basename "${GAME_BINARY}")"
+else
+  BINARY_REL="./${GAME_BINARY}"
+fi
+
+# Only pass STARTUP_CMD as an argument if the game module populated it.
+# ARK uses it for the map/options URL; PZ leaves it empty (all config via flags).
+if [[ -n "${STARTUP_CMD:-}" ]]; then
+  "${BINARY_REL}" "${STARTUP_CMD}" "${STARTUP_FLAGS[@]}" &
+else
+  "${BINARY_REL}" "${STARTUP_FLAGS[@]}" &
+fi
 SERVER_PID=$!
 echo "${SERVER_PID}" > /tmp/game.pid
 
