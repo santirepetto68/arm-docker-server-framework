@@ -29,11 +29,22 @@ JVM_XMX="${JVM_XMX:-8g}"
 build_startup_command() {
   export HOME="/mnt/server"
 
+  # PZ silently crashes later if these are missing — watch service expects them.
+  mkdir -p /mnt/server/.cache/mods /mnt/server/.cache/Workshop
+
   # box64 tuning for the JVM. These make the difference between "crashes in
   # the JIT" and "runs". Documented in box64's README under JVM workloads.
   export BOX64_JVM=1
   export BOX64_DYNAREC_BIGBLOCK=0
   export BOX64_DYNAREC_STRONGMEM=1
+
+  # Force box64 to emulate PZ's bundled x86 SDL/libs rather than trying to
+  # substitute ARM-native versions we don't have (libSDL3.so.0 in particular —
+  # the substitution attempt fails dlopen and the JVM then SIGSEGVs in JNI).
+  export BOX64_EMULATED_LIBS="libSDL3.so.0:libSDL3.so:libSDL2-2.0.so.0:libSDL2.so"
+  export BOX64_NOGTK=1
+  export BOX64_NOPULSE=1
+  export BOX64_NOSANDBOX=1
 
   # JRE + native libs shipped with PZ. Note: deliberately do NOT LD_PRELOAD
   # libjsig.so — with our JVM flag set it isn't needed, and preloading it
