@@ -29,8 +29,14 @@ JVM_XMX="${JVM_XMX:-8g}"
 build_startup_command() {
   export HOME="/mnt/server"
 
-  # PZ silently crashes later if these are missing — watch service expects them.
-  mkdir -p /mnt/server/.cache/mods /mnt/server/.cache/Workshop
+  # Pre-create every directory PZ enumerates on startup. SteamWorkshop
+  # .getStageFolders() calls closedir() on an empty-or-missing directory,
+  # which under box64 segfaults in native libc (crash stack bottoms out in
+  # sun.nio.fs.UnixNativeDispatcher.closedir with si_addr=0x10). Creating
+  # the dirs up front keeps the dynarec off that code path entirely.
+  mkdir -p /mnt/server/.cache/mods \
+           /mnt/server/.cache/Workshop \
+           /mnt/server/steamapps/workshop/content/108600
 
   # box64 tuning for the JVM. These make the difference between "crashes in
   # the JIT" and "runs". Documented in box64's README under JVM workloads.
@@ -38,11 +44,16 @@ build_startup_command() {
   export BOX64_DYNAREC_BIGBLOCK=0
   export BOX64_DYNAREC_STRONGMEM=1
 
-  # Force box64 to emulate PZ's bundled x86 SDL/libs rather than trying to
-  # substitute ARM-native versions we don't have (libSDL3.so.0 in particular —
-  # the substitution attempt fails dlopen and the JVM then SIGSEGVs in JNI).
-  # Format: pipe-separated list of lib soname patterns.
-  export BOX64_EMULATED_LIBS="libSDL3.so.0|libSDL3.so|libSDL2-2.0.so.0|libSDL2.so"
+  # Emulate x86 FLAGS semantics precisely around syscalls. Slower but avoids
+  # the readdir/closedir null-handle crash we hit when enumerating empty
+  # Workshop dirs.
+  #export BOX64_DYNAREC_SAFEFLAGS=1
+
+  # Don't bail if a shared lib is missing — harmless message we saw in the
+  # earlier run was PZ speculatively dlopen-ing libSDL3.so.0 (not needed
+  # on a headless server; the dlopen failure itself is non-fatal, this
+  # just suppresses the scary log line).
+  #export BOX64_ALLOWMISSINGLIBS=1
 
   # JRE + native libs shipped with PZ. Note: deliberately do NOT LD_PRELOAD
   # libjsig.so — with our JVM flag set it isn't needed, and preloading it
