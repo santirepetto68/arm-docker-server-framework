@@ -72,10 +72,11 @@ build_startup_command() {
     "-XX:+UseSerialGC"
     "-XX:-UseCompressedOops"
     "-XX:TieredStopAtLevel=1"
-    # Classpath matches Dyarven's working script exactly. If this produces
-    # a ClassNotFoundError for a Guava/Steamworks4J class, something is
-    # wrong with our java/ dir's contents (verify all jars downloaded).
-    "-cp" "java/:java/projectzomboid.jar"
+    # Classpath: include all jars in java/ (Guava, Steamworks4J, trove, etc.)
+    # plus projectzomboid.jar. Dyarven's script uses just `java/:java/projectzomboid.jar`
+    # but that relies on their java/ dir being flat-extracted; our SteamCMD install
+    # keeps dependencies as separate jars, so we need the `java/*` glob.
+    "-cp" "java/:java/*:java/projectzomboid.jar"
     "zombie.network.GameServer"
     # --- PZ server args below this line ---
     "-port" "${SERVER_PORT}"
