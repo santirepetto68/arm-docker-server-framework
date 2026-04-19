@@ -59,19 +59,49 @@ build_startup_command() {
   # empty and all JVM + PZ args go through STARTUP_FLAGS.
   STARTUP_CMD=""
 
-  # JVM_INTERPRET_ONLY=1 disables the JIT entirely (-Xint). Much slower, but
-  # a diagnostic: box64's dynarec has repeatedly miscompiled C1-JIT'd code
-  # (String.getBytes, jassimp.AiNodeAnim.getNumScaleKeys). If the server runs
-  # with -Xint, the crashes were JIT-dynarec interaction, not JNI/native libs.
+  # JIT strategy: three modes selected by JVM_JIT_MODE:
+  #   "quinten" (default): G1GC + reflection tweaks + targeted reflectionData exclude.
+  #                        This is what the Pterodactyl Q_eggs ARM64 PZ egg uses in
+  #                        production. JIT stays on, runs at near-native speed.
+  #   "dyarven": SerialGC + TieredStopAtLevel=1 + compressed oops/class ptrs off.
+  #              Matches github.com/Dyarven/zomboid-server-on-arm.
+  #   "interpret": -Xint, no JIT at all. Safe but very slow. Diagnostic only.
+  JIT_MODE="${JVM_JIT_MODE:-quinten}"
   JIT_FLAGS=()
-  if is_true "${JVM_INTERPRET_ONLY:-0}"; then
-    JIT_FLAGS=("-Xint")
-  else
-    JIT_FLAGS=("-XX:TieredStopAtLevel=1")
-  fi
+  case "${JIT_MODE}" in
+    quinten)
+      JIT_FLAGS=(
+        "-XX:-OmitStackTraceInFastThrow"
+        "-XX:+UseG1GC"
+        "-Dsun.reflect.noInflation=true"
+        "-Djdk.reflect.useDirectMethodHandle=false"
+        "-XX:CompileCommand=exclude,java/lang/Class,reflectionData"
+      )
+      ;;
+    dyarven)
+      JIT_FLAGS=(
+        "-XX:+UseSerialGC"
+        "-XX:-UseCompressedOops"
+        "-XX:-UseCompressedClassPointers"
+        "-XX:TieredStopAtLevel=1"
+      )
+      ;;
+    interpret)
+      JIT_FLAGS=("-Xint")
+      ;;
+    *)
+      log "Unknown JVM_JIT_MODE='${JIT_MODE}', falling back to 'quinten'"
+      JIT_FLAGS=(
+        "-XX:-OmitStackTraceInFastThrow"
+        "-XX:+UseG1GC"
+        "-Dsun.reflect.noInflation=true"
+        "-Djdk.reflect.useDirectMethodHandle=false"
+        "-XX:CompileCommand=exclude,java/lang/Class,reflectionData"
+      )
+      ;;
+  esac
 
   STARTUP_FLAGS=(
-    # --- JVM flags tuned for box64 (matches Dyarven's working config) ---
     "-Djava.awt.headless=true"
     "-Xms${JVM_XMS}"
     "-Xmx${JVM_XMX}"
@@ -80,9 +110,6 @@ build_startup_command() {
     "-Dzomboid.znetlog=1"
     "-Djava.library.path=linux64/:natives/"
     "-Djava.security.egd=file:/dev/urandom"
-    "-XX:+UseSerialGC"
-    "-XX:-UseCompressedOops"
-    "-XX:-UseCompressedClassPointers"
     "${JIT_FLAGS[@]}"
     # Classpath: include all jars in java/ (Guava, Steamworks4J, trove, etc.)
     # plus projectzomboid.jar. Dyarven's script uses just `java/:java/projectzomboid.jar`
