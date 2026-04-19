@@ -29,7 +29,9 @@ build_startup_command() {
   log "=== FEX/host diagnostics ==="
   log "uname -r: $(uname -r 2>&1 || true)"
   log "FEX binary: $(command -v FEX 2>/dev/null || command -v FEXInterpreter 2>/dev/null || echo 'not on PATH')"
-  log "FEX_ROOTFS_DISTRO: ${FEX_ROOTFS_DISTRO:-<default: Ubuntu 20.04>}"
+  log "FEX_ROOTFS_DISTRO: ${FEX_ROOTFS_DISTRO:-<default: Ubuntu 24.04>}"
+  log "FEX_ROOTFS_PATH: ${FEX_ROOTFS_PATH:-<unset>}"
+  log "/opt/fex-rootfs: $([[ -d /opt/fex-rootfs ]] && echo present || echo absent)"
   log "============================"
 
   # Match the Quinten Q_eggs FEX egg env verbatim. Credit:
@@ -43,56 +45,58 @@ build_startup_command() {
   # without it under FEX. The Quinten egg preloads it because the panel
   # injects the env line unconditionally, not because it's required.
 
-  # FEX rootfs bootstrap.
+  # FEX rootfs resolution.
   #
-  # The quintenqvd/pterodactyl_images:dev_fex_latest image does NOT bundle a
-  # rootfs. FEX resolves its rootfs directly from the FEX_ROOTFS env var
-  # (verified: Config.json-based resolution was unreliable in this FEX build).
+  # Priority:
+  #   1. FEX_ROOTFS_PATH env var (explicit override — e.g. shared host mount).
+  #   2. Image-bundled rootfs at /opt/fex-rootfs (supersunho/fex-emu ships this).
+  #   3. On-demand download to /mnt/server/.fex/RootFS/<distro> (fallback for
+  #      images without a bundled rootfs; requires curl + python3 + unsquashfs).
   #
-  # Rootfs default is Ubuntu 20.04: the FEX binary in this image refuses to
-  # launch Ubuntu 22.04/24.04 rootfs glibc with "FATAL: kernel too old" and
-  # doesn't honor FEX_HOSTVER/FEX_KERNELVER/FEX_KERNELVERSION env vars to
-  # spoof the reported kernel ABI. Ubuntu 20.04's older glibc (2.31, min
-  # kernel 3.2) runs fine. The distro choice is irrelevant to PZ — FEX only
-  # needs an x86_64 libc + loader.
-  #
-  # Override via FEX_ROOTFS_DISTRO="Ubuntu 20.04" / "Ubuntu 22.04" / etc.
-  # (exact key from the FEX catalog JSON). The rootfs lives under
-  # /mnt/server/.fex/ so it persists across container recreates.
-  local rootfs_distro="${FEX_ROOTFS_DISTRO:-Ubuntu 20.04}"
-  local rootfs_name
-  rootfs_name="$(echo "${rootfs_distro}" | tr ' .' '_')"
-  local rootfs_dir="/mnt/server/.fex/RootFS/${rootfs_name}"
-  mkdir -p "/mnt/server/.fex/RootFS"
+  # FEX_ROOTFS_DISTRO only matters for path 3; ignored if 1 or 2 resolves.
+  local rootfs_dir=""
 
-  if [[ ! -d "${rootfs_dir}" ]]; then
-    log "FEX rootfs '${rootfs_distro}' not found — resolving download URL"
-    local catalog_url="https://raw.githubusercontent.com/FEX-Emu/RootFS/refs/heads/main/RootFS_links.json"
-    local rootfs_url
-    rootfs_url="$(curl -fsSL "${catalog_url}" | \
-                  python3 -c "import json,sys; d=json.load(sys.stdin); print(d['v1']['${rootfs_distro} (SquashFS)']['URL'])" 2>/dev/null)"
-    if [[ -z "${rootfs_url}" ]]; then
-      log "Failed to resolve FEX rootfs URL for '${rootfs_distro}' from ${catalog_url}"
-      exit 1
-    fi
+  if [[ -n "${FEX_ROOTFS_PATH:-}" && -d "${FEX_ROOTFS_PATH%/}" ]]; then
+    rootfs_dir="${FEX_ROOTFS_PATH%/}"
+    log "Using FEX_ROOTFS_PATH override: ${rootfs_dir}"
+  elif [[ -d /opt/fex-rootfs ]]; then
+    rootfs_dir="/opt/fex-rootfs"
+    log "Using image-bundled FEX rootfs: ${rootfs_dir}"
+  else
+    local rootfs_distro="${FEX_ROOTFS_DISTRO:-Ubuntu 24.04}"
+    local rootfs_name
+    rootfs_name="$(echo "${rootfs_distro}" | tr ' .' '_')"
+    rootfs_dir="/mnt/server/.fex/RootFS/${rootfs_name}"
+    mkdir -p "/mnt/server/.fex/RootFS"
 
-    log "Downloading FEX rootfs from ${rootfs_url} (~1-2GB, several minutes)"
-    local tmp_sqsh="/tmp/${rootfs_name}.sqsh"
-    if ! curl -fSL --retry 3 -o "${tmp_sqsh}" "${rootfs_url}"; then
-      log "Failed to download FEX rootfs"
-      exit 1
+    if [[ ! -d "${rootfs_dir}" ]]; then
+      log "No bundled rootfs and none cached — downloading '${rootfs_distro}'"
+      local catalog_url="https://raw.githubusercontent.com/FEX-Emu/RootFS/refs/heads/main/RootFS_links.json"
+      local rootfs_url
+      rootfs_url="$(curl -fsSL "${catalog_url}" | \
+                    python3 -c "import json,sys; d=json.load(sys.stdin); print(d['v1']['${rootfs_distro} (SquashFS)']['URL'])" 2>/dev/null)"
+      if [[ -z "${rootfs_url}" ]]; then
+        log "Failed to resolve FEX rootfs URL for '${rootfs_distro}' from ${catalog_url}"
+        exit 1
+      fi
+
+      log "Downloading FEX rootfs from ${rootfs_url} (~1-2GB, several minutes)"
+      local tmp_sqsh="/tmp/${rootfs_name}.sqsh"
+      if ! curl -fSL --retry 3 -o "${tmp_sqsh}" "${rootfs_url}"; then
+        log "Failed to download FEX rootfs"
+        exit 1
+      fi
+      mkdir -p "${rootfs_dir}"
+      log "Extracting rootfs squashfs to ${rootfs_dir}"
+      if ! unsquashfs -f -d "${rootfs_dir}" "${tmp_sqsh}" >/dev/null; then
+        log "unsquashfs failed (is squashfs-tools installed in the image?)"
+        exit 1
+      fi
+      rm -f "${tmp_sqsh}"
+      log "FEX rootfs ready at ${rootfs_dir}"
     fi
-    mkdir -p "${rootfs_dir}"
-    log "Extracting rootfs squashfs to ${rootfs_dir}"
-    if ! unsquashfs -f -d "${rootfs_dir}" "${tmp_sqsh}" >/dev/null; then
-      log "unsquashfs failed"
-      exit 1
-    fi
-    rm -f "${tmp_sqsh}"
-    log "FEX rootfs ready at ${rootfs_dir}"
   fi
 
-  # Point FEX at the rootfs via the FEX_ROOTFS env var (verified working).
   export FEX_ROOTFS="${rootfs_dir}"
   log "FEX_ROOTFS=${FEX_ROOTFS}"
 

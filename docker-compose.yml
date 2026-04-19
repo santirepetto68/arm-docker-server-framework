@@ -91,8 +91,11 @@ services:
     extends:
       service: server
     # Override the runtime image: PZ needs FEX-Emu (box64 crashes PZ's JIT).
-    # The FEX image ships its own rootfs at /usr/local/FEX/.
-    image: ${PZ_RUNTIME_IMAGE:-quintenqvd/pterodactyl_images:dev_fex_latest}
+    # supersunho/fex-emu ships an x86_64 rootfs at /opt/fex-rootfs which game.sh
+    # prefers. If you swap to an image without a bundled rootfs, set
+    # FEX_ROOTFS_PATH or let game.sh download one (needs curl + python3 +
+    # unsquashfs in the image).
+    image: ${PZ_RUNTIME_IMAGE:-supersunho/fex-emu:ubuntu-24.04}
     container_name: ${COMPOSE_PROJECT_NAME:-gameserver}_project-zomboid_server
     depends_on:
       project-zomboid-install:
@@ -103,12 +106,13 @@ services:
         required: false
     environment:
       - GAME_ID=project-zomboid
-      # FEX rootfs is bootstrapped by games/project-zomboid/game.sh into
-      # /mnt/server/.fex/ (~1-2GB, downloaded on first run). Persists inside
-      # the PZ data volume across container recreates. Override the distro
-      # via FEX_ROOTFS_DISTRO (default: "Ubuntu 20.04"); this FEX build
-      # cannot launch 22.04/24.04 rootfs due to kernel ABI reporting.
-      - FEX_ROOTFS_DISTRO=${FEX_ROOTFS_DISTRO:-Ubuntu 20.04}
+      # FEX rootfs resolution order (see games/project-zomboid/game.sh):
+      #   1. FEX_ROOTFS_PATH if set to a real dir
+      #   2. image-bundled /opt/fex-rootfs (supersunho/fex-emu has this)
+      #   3. on-demand download to /mnt/server/.fex/RootFS/<distro>
+      # FEX_ROOTFS_DISTRO only applies to path 3.
+      - FEX_ROOTFS_DISTRO=${FEX_ROOTFS_DISTRO:-Ubuntu 24.04}
+      - FEX_ROOTFS_PATH=${FEX_ROOTFS_PATH:-}
     ports:
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/udp"
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/tcp"
