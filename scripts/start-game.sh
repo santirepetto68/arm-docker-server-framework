@@ -69,12 +69,23 @@ else
   BINARY_REL="./${GAME_BINARY}"
 fi
 
+# GAME_LAUNCHER (optional): an x86_64 emulator wrapper the game binary must
+# run under. ARK leaves this unset and runs directly via the host's binfmt
+# (box64). PZ sets GAME_LAUNCHER="FEX" because FEX handles the JVM flags
+# that box64's dynarec mistranslates. Split on whitespace so callers can pass
+# launcher flags (e.g. GAME_LAUNCHER="FEX --some-flag").
+LAUNCHER_ARGV=()
+if [[ -n "${GAME_LAUNCHER:-}" ]]; then
+  read -ra LAUNCHER_ARGV <<< "${GAME_LAUNCHER}"
+  log "Launching under emulator: ${GAME_LAUNCHER}"
+fi
+
 # Only pass STARTUP_CMD as an argument if the game module populated it.
 # ARK uses it for the map/options URL; PZ leaves it empty (all config via flags).
 if [[ -n "${STARTUP_CMD:-}" ]]; then
-  "${BINARY_REL}" "${STARTUP_CMD}" "${STARTUP_FLAGS[@]}" &
+  "${LAUNCHER_ARGV[@]}" "${BINARY_REL}" "${STARTUP_CMD}" "${STARTUP_FLAGS[@]}" &
 else
-  "${BINARY_REL}" "${STARTUP_FLAGS[@]}" &
+  "${LAUNCHER_ARGV[@]}" "${BINARY_REL}" "${STARTUP_FLAGS[@]}" &
 fi
 SERVER_PID=$!
 echo "${SERVER_PID}" > /tmp/game.pid

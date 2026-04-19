@@ -90,6 +90,9 @@ services:
   project-zomboid:
     extends:
       service: server
+    # Override the runtime image: PZ needs FEX-Emu (box64 crashes PZ's JIT).
+    # The FEX image ships its own rootfs at /usr/local/FEX/.
+    image: ${PZ_RUNTIME_IMAGE:-quintenqvd/pterodactyl_images:dev_fex_latest}
     container_name: ${COMPOSE_PROJECT_NAME:-gameserver}_project-zomboid_server
     depends_on:
       project-zomboid-install:
@@ -100,6 +103,13 @@ services:
         required: false
     environment:
       - GAME_ID=project-zomboid
+      # FEX_KERNELVERSION works around the "FATAL: kernel too old" glibc abort
+      # from the rootfs's glibc when FEX reports too low an OS ABI version.
+      # Override via instances/project-zomboid.env if needed.
+      - FEX_KERNELVERSION=${FEX_KERNELVERSION:-6.1}
+      # FEX_ROOTFS_PATH: optional. Empty = use the image-bundled rootfs.
+      # Set to a mounted path (ending in /) to share a rootfs between containers.
+      - FEX_ROOTFS_PATH=${FEX_ROOTFS_PATH:-}
     ports:
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/udp"
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/tcp"

@@ -13,3 +13,7 @@ data/ark-se/*
 !data/ark-se/.gitkeep
 data/project-zomboid/*
 !data/project-zomboid/.gitkeep
+
+# FEX-Emu state files (auto-created by the FEX runtime image on first run)
+Config.json
+rootfs/

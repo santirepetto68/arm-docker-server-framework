@@ -4,12 +4,14 @@
 #   build_startup_command()  — sets STARTUP_CMD (string) and STARTUP_FLAGS (array)
 #   shutdown_server()        — graceful shutdown using SERVER_PID global
 #
-# Launch strategy: call `java` directly under box64 instead of the
-# ProjectZomboid64 shell launcher. The launcher applies JVM flags from
-# ProjectZomboid64.json (ZGC, compressed oops, bigblock-friendly code paths)
-# that make the JVM crash under box64's x86→ARM dynarec. The flag set below
-# is what the community found to actually run PZ reliably on ARM64 —
-# credit: github.com/Dyarven/zomboid-server-on-arm.
+# Launch strategy: run the stock ProjectZomboid64 shell launcher under FEX-Emu
+# (GAME_LAUNCHER="FEX" in game.env). Credit: QuintenQVD0/Q_eggs ARM64 PZ egg
+# (quintenqvd/pterodactyl_images:dev_fex_latest).
+#
+# History: we previously invoked `jre64/bin/java` directly under box64 with a
+# curated JVM flag set, because ProjectZomboid64.json's flags (ZGC, compressed
+# oops) make box64's dynarec mistranslate JIT'd code. FEX handles those flags
+# correctly, so under FEX we use the launcher as-is and let it read its JSON.
 
 # Defaults for Project Zomboid variables
 SERVER_PORT="${SERVER_PORT:-16261}"
@@ -22,121 +24,31 @@ ADDITIONAL_ARGS="${ADDITIONAL_ARGS:-}"
 MODS="${MODS:-}"
 MOD_WORKSHOP_IDS="${MOD_WORKSHOP_IDS:-}"
 
-# JVM heap — PZ recommends at least 4G. Tunable per instance.
-JVM_XMS="${JVM_XMS:-4g}"
-JVM_XMX="${JVM_XMX:-8g}"
-
 build_startup_command() {
-  # Match the working arm64 script's env as closely as possible. Credit:
-  # github.com/Dyarven/zomboid-server-on-arm.
-  #
-  # Notable differences from the working setup that we deliberately keep:
-  #  - cachedir stays at /mnt/server/.cache so config/saves live on the
-  #    bind-mounted volume instead of a container-local $HOME.
-  #  - We still export HOME so PZ's internal "where do I put Zomboid/"
-  #    logic has something to anchor to.
+  # Match the Quinten Q_eggs FEX egg env verbatim. Credit:
+  # github.com/QuintenQVD0/Q_eggs (egg-project-zomboid-a-r-m64.json).
   export HOME="/mnt/server"
+  export PATH="/mnt/server/jre64/bin:${PATH}"
+  export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server:/mnt/server/lib:${LD_LIBRARY_PATH:-}"
 
-  # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup
-  # and closedir() on a missing dir crashes under box64.
+  # libjsig.so installs JVM-aware signal handlers so SIGSEGV during JIT
+  # recovery doesn't crash the process. The stock ProjectZomboid64 launcher
+  # already references it; preloading here matches Quinten's egg.
+  local jsig_path="/mnt/server/jre64/lib/libjsig.so"
+  if [[ -f "${jsig_path}" ]]; then
+    export LD_PRELOAD="${LD_PRELOAD:-}${LD_PRELOAD:+:}${jsig_path}"
+  fi
+
+  # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup.
   mkdir -p /mnt/server/.cache/mods \
            /mnt/server/.cache/Workshop \
            /mnt/server/steamapps/workshop/content/108600
 
-  # box64 env that matches the Dyarven systemd unit verbatim. Don't add
-  # BOX64_DYNAREC_SAFEFLAGS / BOX64_ALLOWMISSINGLIBS / BOX64_EMULATED_LIBS
-  # here — the working script doesn't use them and adding them has been
-  # making things worse, not better.
-  export BOX64_JVM=1
-  export BOX64_DYNAREC_BIGBLOCK=0
-  export BOX64_DYNAREC_STRONGMEM=1
-
-  # LD_LIBRARY_PATH — mirror the working script exactly. The trailing `.`
-  # (CWD) matters: PZ's native loader looks for some libs relative to CWD.
-  export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server/jre64/lib:."
-
-  # We invoke java directly (GAME_BINARY=jre64/bin/java), so STARTUP_CMD stays
-  # empty and all JVM + PZ args go through STARTUP_FLAGS.
+  # We run the stock launcher (GAME_BINARY=ProjectZomboid64) under FEX.
+  # All JVM flags come from ProjectZomboid64.json in the install dir; tune
+  # heap and GC by editing that file.
   STARTUP_CMD=""
-
-  # JIT strategy: three modes selected by JVM_JIT_MODE:
-  #   "dyarven" (default): SerialGC + -UseCompressedOops + TieredStopAtLevel=1
-  #                        (C1 only, no C2). Exact match for the validated
-  #                        github.com/Dyarven/zomboid-server-on-arm systemd unit.
-  #   "quinten": G1GC + reflection tweaks + compressed ptrs off. Adapted from
-  #              the Pterodactyl Q_eggs ARM64 PZ egg. Crashed for us in
-  #              C1-compiled DirectByteBuffer reads — kept for experimentation.
-  #   "interpret": -Xint, no JIT at all. Safe but very slow. Diagnostic only.
-  JIT_MODE="${JVM_JIT_MODE:-dyarven}"
-  JIT_FLAGS=()
-  case "${JIT_MODE}" in
-    quinten)
-      # Quinten's Q_eggs ARM64 PZ egg flag set, plus compressed-ptrs off.
-      # Quinten's recipe alone crashes for us in C1-compiled methods that
-      # read compressed oops (e.g. DirectByteBuffer::getFloat) — box64's
-      # dynarec mistranslates the oop-decompression sequence. Turning off
-      # UseCompressedOops / UseCompressedClassPointers is Dyarven's fix,
-      # and combining the two recipes keeps G1GC + JIT speed without the
-      # dynarec crashes.
-      JIT_FLAGS=(
-        "-XX:-OmitStackTraceInFastThrow"
-        "-XX:+UseG1GC"
-        "-XX:-UseCompressedOops"
-        "-XX:-UseCompressedClassPointers"
-        "-Dsun.reflect.noInflation=true"
-        "-Djdk.reflect.useDirectMethodHandle=false"
-        "-XX:CompileCommand=exclude,java/lang/Class,reflectionData"
-      )
-      ;;
-    dyarven)
-      # Base: exact match for github.com/Dyarven/zomboid-server-on-arm
-      # (SerialGC, -UseCompressedOops, TieredStopAtLevel=1 — C1 only, no C2).
-      #
-      # Plus targeted CompileCommand=exclude entries for methods that box64's
-      # dynarec has been observed to miscompile on our host. Each was added
-      # from a real hs_err_pid*.log "Compiled method" line. If new crashes
-      # appear, grep the log for the `Compiled method (c1)` line and add the
-      # method here using slash-separated class names.
-      JIT_FLAGS=(
-        "-XX:+UseSerialGC"
-        "-XX:-UseCompressedOops"
-        "-XX:TieredStopAtLevel=1"
-        "-XX:CompileCommand=exclude,org/lwjgl/util/vector/Matrix4f,determinant3x3"
-        "-XX:CompileCommand=exclude,org/lwjgl/util/vector/Matrix4f,invert"
-      )
-      ;;
-    interpret)
-      JIT_FLAGS=("-Xint")
-      ;;
-    *)
-      log "Unknown JVM_JIT_MODE='${JIT_MODE}', falling back to 'quinten'"
-      JIT_FLAGS=(
-        "-XX:-OmitStackTraceInFastThrow"
-        "-XX:+UseG1GC"
-        "-Dsun.reflect.noInflation=true"
-        "-Djdk.reflect.useDirectMethodHandle=false"
-        "-XX:CompileCommand=exclude,java/lang/Class,reflectionData"
-      )
-      ;;
-  esac
-
   STARTUP_FLAGS=(
-    "-Djava.awt.headless=true"
-    "-Xms${JVM_XMS}"
-    "-Xmx${JVM_XMX}"
-    "-XX:ActiveProcessorCount=4"
-    "-Dzomboid.steam=1"
-    "-Dzomboid.znetlog=1"
-    "-Djava.library.path=linux64/:natives/"
-    "-Djava.security.egd=file:/dev/urandom"
-    "${JIT_FLAGS[@]}"
-    # Classpath: include all jars in java/ (Guava, Steamworks4J, trove, etc.)
-    # plus projectzomboid.jar. Dyarven's script uses just `java/:java/projectzomboid.jar`
-    # but that relies on their java/ dir being flat-extracted; our SteamCMD install
-    # keeps dependencies as separate jars, so we need the `java/*` glob.
-    "-cp" "java/:java/*:java/projectzomboid.jar"
-    "zombie.network.GameServer"
-    # --- PZ server args below this line ---
     "-port" "${SERVER_PORT}"
     "-udpport" "${STEAM_PORT}"
     "-cachedir=/mnt/server/.cache"
