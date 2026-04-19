@@ -60,7 +60,17 @@ build_startup_command() {
     rootfs_dir="${FEX_ROOTFS_PATH%/}"
     log "Using FEX_ROOTFS_PATH override: ${rootfs_dir}"
   elif [[ -d /opt/fex-rootfs ]]; then
+    # supersunho/fex-emu wraps the rootfs in a per-distro subdir, e.g.
+    # /opt/fex-rootfs/Ubuntu_24_04/. FEX needs the inner dir (where usr/ lib/
+    # live), not the parent. If we find exactly one subdir, descend; otherwise
+    # use /opt/fex-rootfs directly (covers flatter images).
     rootfs_dir="/opt/fex-rootfs"
+    local subdirs=( /opt/fex-rootfs/*/ )
+    if (( ${#subdirs[@]} == 1 )) && [[ -d /opt/fex-rootfs/usr ]]; then
+      : # /opt/fex-rootfs itself is the rootfs
+    elif (( ${#subdirs[@]} == 1 )) && [[ -d "${subdirs[0]}usr" ]]; then
+      rootfs_dir="${subdirs[0]%/}"
+    fi
     log "Using image-bundled FEX rootfs: ${rootfs_dir}"
   else
     local rootfs_distro="${FEX_ROOTFS_DISTRO:-Ubuntu 24.04}"
