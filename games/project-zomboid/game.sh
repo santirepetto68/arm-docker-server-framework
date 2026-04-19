@@ -36,32 +36,54 @@ build_startup_command() {
   # without it under FEX. The Quinten egg preloads it because the panel
   # injects the env line unconditionally, not because it's required.
 
-  # FEX rootfs bootstrap. The quintenqvd/pterodactyl_images:dev_fex_latest
-  # image does NOT bundle a rootfs — its entrypoint script downloads one on
-  # first run via FEXRootFSFetcher. We bypass that entrypoint, so we
-  # replicate the fetch here. Rootfs lives under /mnt/server/rootfs/ so it
-  # persists across container recreates via the data bind mount.
-  export FEX_ROOTFS_PATH="${FEX_ROOTFS_PATH:-/mnt/server/rootfs/}"
-  export FEX_APP_DATA_LOCATION="${FEX_ROOTFS_PATH}"
-  export FEX_APP_CONFIG_LOCATION="/mnt/server/"
-  export XDG_DATA_HOME="/mnt/server"
+  # FEX rootfs bootstrap.
+  #
+  # The quintenqvd/pterodactyl_images:dev_fex_latest image does NOT bundle a
+  # rootfs — its entrypoint script downloads one on first run. We bypass
+  # that entrypoint, so we replicate the bootstrap here.
+  #
+  # FEX resolves its rootfs by:
+  #   1. Reading $FEX_APP_CONFIG_LOCATION/Config.json (or ~/.fex-emu/Config.json)
+  #   2. That JSON's Config.RootFS value names a subdirectory under
+  #      $FEX_APP_DATA_LOCATION/RootFS/<name>/ (our ROOTFS_NAME below)
+  #
+  # Rootfs lives under /mnt/server/.fex/ so it persists across container
+  # recreates via the data bind mount. We deliberately do NOT use
+  # FEXRootFSFetcher — it's an interactive tool that spawns zenity and fails
+  # silently in headless containers. Instead, curl the tarball directly.
+  export FEX_APP_DATA_LOCATION="/mnt/server/.fex/"
+  export FEX_APP_CONFIG_LOCATION="/mnt/server/.fex/"
+  export XDG_DATA_HOME="/mnt/server/.fex"
+  mkdir -p "${FEX_APP_DATA_LOCATION}/RootFS" "${FEX_APP_CONFIG_LOCATION}"
 
-  if [[ ! -d "${FEX_ROOTFS_PATH}/RootFS" ]] && [[ ! -d "/mnt/server/rootfs/Ubuntu_22_04" ]]; then
-    log "FEX rootfs not found at ${FEX_ROOTFS_PATH} — downloading (~2GB, several minutes on first run)"
-    mkdir -p "${FEX_ROOTFS_PATH}"
-    if ! FEXRootFSFetcher -y -x --distro-name=ubuntu --distro-version=22.04; then
-      log "FEXRootFSFetcher failed; server cannot start"
+  local rootfs_name="Ubuntu_22_04"
+  local rootfs_dir="${FEX_APP_DATA_LOCATION}RootFS/${rootfs_name}"
+  local fex_config="${FEX_APP_CONFIG_LOCATION}Config.json"
+
+  if [[ ! -d "${rootfs_dir}" ]]; then
+    log "FEX rootfs not found — downloading (~2GB, several minutes on first run)"
+    local rootfs_url="https://rootfs.fex-emu.com/RootFS/${rootfs_name}.sqsh"
+    local tmp_sqsh="/tmp/${rootfs_name}.sqsh"
+    if ! curl -fSL --retry 3 -o "${tmp_sqsh}" "${rootfs_url}"; then
+      log "Failed to download FEX rootfs from ${rootfs_url}"
       exit 1
     fi
+    mkdir -p "${rootfs_dir}"
+    log "Extracting rootfs squashfs to ${rootfs_dir} (requires unsquashfs)"
+    if ! unsquashfs -d "${rootfs_dir}" "${tmp_sqsh}" >/dev/null; then
+      log "unsquashfs failed — keeping ${tmp_sqsh} and letting FEX mount .sqsh directly"
+      # Fallback: FEX can consume a .sqsh file directly if named correctly.
+      mv "${tmp_sqsh}" "${FEX_APP_DATA_LOCATION}RootFS/${rootfs_name}.sqsh"
+      rootfs_dir="${FEX_APP_DATA_LOCATION}RootFS/${rootfs_name}.sqsh"
+    else
+      rm -f "${tmp_sqsh}"
+    fi
+    log "FEX rootfs ready at ${rootfs_dir}"
   fi
 
-  # Write Config.json (at FEX_APP_CONFIG_LOCATION) if the rootfs exists but
-  # the config doesn't — matches the entrypoint's behavior.
-  local fex_config="/mnt/server/Config.json"
-  if { [[ -f "/mnt/server/rootfs/Ubuntu_22_04/break_chroot.sh" ]] || \
-       [[ -f "${FEX_ROOTFS_PATH}/RootFS/Ubuntu_22_04/break_chroot.sh" ]]; } && \
-     [[ ! -f "${fex_config}" ]]; then
-    echo '{"Config":{"RootFS":"Ubuntu_22_04"}}' > "${fex_config}"
+  # Write Config.json pointing FEX at the rootfs.
+  if [[ ! -f "${fex_config}" ]]; then
+    echo "{\"Config\":{\"RootFS\":\"${rootfs_name}\"}}" > "${fex_config}"
     log "Generated FEX Config.json at ${fex_config}"
   fi
 
