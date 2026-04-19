@@ -27,28 +27,9 @@ MOD_WORKSHOP_IDS="${MOD_WORKSHOP_IDS:-}"
 build_startup_command() {
   # Diagnostics — printed every start so crash-restart loops are debuggable.
   log "=== FEX/host diagnostics ==="
-  log "uname -a: $(uname -a 2>&1 || true)"
   log "uname -r: $(uname -r 2>&1 || true)"
-  local fex_bin_path
-  fex_bin_path="$(command -v FEX 2>/dev/null || command -v FEXInterpreter 2>/dev/null || echo 'not on PATH')"
-  log "FEX binary: ${fex_bin_path}"
-  local fex_ver
-  fex_ver="$(FEXInterpreter --version 2>&1 | head -1 || true)"
-  [[ -z "${fex_ver}" ]] && fex_ver="$(FEX --version 2>&1 | head -1 || true)"
-  log "FEX version: ${fex_ver:-unknown}"
-  log "Existing Config.json (XDG path):"
-  if [[ -f /mnt/server/.fex/fex-emu/Config.json ]]; then
-    log "  $(cat /mnt/server/.fex/fex-emu/Config.json)"
-  else
-    log "  (not present)"
-  fi
-  log "Old-path Config.json (should be absent after cleanup):"
-  if [[ -f /mnt/server/.fex/Config.json ]]; then
-    log "  $(cat /mnt/server/.fex/Config.json)"
-  else
-    log "  (not present)"
-  fi
-  log "FEX_KERNELVERSION env var: ${FEX_KERNELVERSION:-<unset>}"
+  log "FEX binary: $(command -v FEX 2>/dev/null || command -v FEXInterpreter 2>/dev/null || echo 'not on PATH')"
+  log "FEX_ROOTFS_DISTRO: ${FEX_ROOTFS_DISTRO:-<default: Ubuntu 20.04>}"
   log "============================"
 
   # Match the Quinten Q_eggs FEX egg env verbatim. Credit:
@@ -65,50 +46,37 @@ build_startup_command() {
   # FEX rootfs bootstrap.
   #
   # The quintenqvd/pterodactyl_images:dev_fex_latest image does NOT bundle a
-  # rootfs — its entrypoint script downloads one on first run. We bypass
-  # that entrypoint, so we replicate the bootstrap here.
+  # rootfs. FEX resolves its rootfs directly from the FEX_ROOTFS env var
+  # (verified: Config.json-based resolution was unreliable in this FEX build).
   #
-  # FEX resolves its rootfs by:
-  #   1. Reading $FEX_APP_CONFIG_LOCATION/Config.json (or ~/.fex-emu/Config.json)
-  #   2. That JSON's Config.RootFS value names a subdirectory under
-  #      $FEX_APP_DATA_LOCATION/RootFS/<name>/ (our ROOTFS_NAME below)
+  # Rootfs default is Ubuntu 20.04: the FEX binary in this image refuses to
+  # launch Ubuntu 22.04/24.04 rootfs glibc with "FATAL: kernel too old" and
+  # doesn't honor FEX_HOSTVER/FEX_KERNELVER/FEX_KERNELVERSION env vars to
+  # spoof the reported kernel ABI. Ubuntu 20.04's older glibc (2.31, min
+  # kernel 3.2) runs fine. The distro choice is irrelevant to PZ — FEX only
+  # needs an x86_64 libc + loader.
   #
-  # Rootfs lives under /mnt/server/.fex/ so it persists across container
-  # recreates via the data bind mount. We deliberately do NOT use
-  # FEXRootFSFetcher — it's an interactive tool that spawns zenity and fails
-  # silently in headless containers. Instead, curl the tarball directly.
-  # FEX actually resolves its rootfs from a Config.json at XDG_CONFIG_HOME
-  # (i.e. ~/.fex-emu/Config.json), not from the FEX_APP_CONFIG_LOCATION env
-  # var that the Pterodactyl image's entrypoint sets — that was just for
-  # Pterodactyl's convenience. We write directly to the XDG path.
-  export HOME="/mnt/server"
-  export XDG_DATA_HOME="/mnt/server/.fex"
-  export XDG_CONFIG_HOME="/mnt/server/.fex"
-  export FEX_APP_DATA_LOCATION="/mnt/server/.fex/"
-  export FEX_APP_CONFIG_LOCATION="/mnt/server/.fex/fex-emu/"
-  mkdir -p "/mnt/server/.fex/RootFS" \
-           "/mnt/server/.fex/fex-emu"
-
-  local rootfs_name="Ubuntu_22_04"
+  # Override via FEX_ROOTFS_DISTRO="Ubuntu 20.04" / "Ubuntu 22.04" / etc.
+  # (exact key from the FEX catalog JSON). The rootfs lives under
+  # /mnt/server/.fex/ so it persists across container recreates.
+  local rootfs_distro="${FEX_ROOTFS_DISTRO:-Ubuntu 20.04}"
+  local rootfs_name
+  rootfs_name="$(echo "${rootfs_distro}" | tr ' .' '_')"
   local rootfs_dir="/mnt/server/.fex/RootFS/${rootfs_name}"
-  # Write Config.json at the XDG path FEX actually reads (via $XDG_CONFIG_HOME/fex-emu/Config.json).
-  local fex_config="/mnt/server/.fex/fex-emu/Config.json"
+  mkdir -p "/mnt/server/.fex/RootFS"
 
   if [[ ! -d "${rootfs_dir}" ]]; then
-    log "FEX rootfs not found — resolving download URL"
-    # The rootfs URLs are date-stamped and rotate over time. The FEX-Emu
-    # project publishes a catalog at the URL below; we parse out the
-    # Ubuntu 22.04 SquashFS entry to stay current.
+    log "FEX rootfs '${rootfs_distro}' not found — resolving download URL"
     local catalog_url="https://raw.githubusercontent.com/FEX-Emu/RootFS/refs/heads/main/RootFS_links.json"
     local rootfs_url
     rootfs_url="$(curl -fsSL "${catalog_url}" | \
-                  python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["v1"]["Ubuntu 22.04 (SquashFS)"]["URL"])' 2>/dev/null)"
+                  python3 -c "import json,sys; d=json.load(sys.stdin); print(d['v1']['${rootfs_distro} (SquashFS)']['URL'])" 2>/dev/null)"
     if [[ -z "${rootfs_url}" ]]; then
-      log "Failed to resolve FEX rootfs URL from ${catalog_url}"
+      log "Failed to resolve FEX rootfs URL for '${rootfs_distro}' from ${catalog_url}"
       exit 1
     fi
 
-    log "Downloading FEX rootfs from ${rootfs_url} (~2GB, several minutes)"
+    log "Downloading FEX rootfs from ${rootfs_url} (~1-2GB, several minutes)"
     local tmp_sqsh="/tmp/${rootfs_name}.sqsh"
     if ! curl -fSL --retry 3 -o "${tmp_sqsh}" "${rootfs_url}"; then
       log "Failed to download FEX rootfs"
@@ -117,27 +85,16 @@ build_startup_command() {
     mkdir -p "${rootfs_dir}"
     log "Extracting rootfs squashfs to ${rootfs_dir}"
     if ! unsquashfs -f -d "${rootfs_dir}" "${tmp_sqsh}" >/dev/null; then
-      log "unsquashfs failed — keeping ${tmp_sqsh} as direct-mount fallback"
-      mv "${tmp_sqsh}" "/mnt/server/.fex/RootFS/${rootfs_name}.sqsh"
-      rootfs_dir="/mnt/server/.fex/RootFS/${rootfs_name}.sqsh"
-    else
-      rm -f "${tmp_sqsh}"
+      log "unsquashfs failed"
+      exit 1
     fi
+    rm -f "${tmp_sqsh}"
     log "FEX rootfs ready at ${rootfs_dir}"
   fi
 
-  # Write Config.json pointing FEX at the rootfs. The Emulated.KernelVersion
-  # override is essential: without it, FEX reports a low osversion to the
-  # x86_64 glibc inside the rootfs, which aborts with "FATAL: kernel too old".
-  # The Ubuntu 22.04 rootfs (2025-01-08 build) needs at least 3.15; we set
-  # 6.1 to match the Oracle VPS host kernel and leave headroom. Override
-  # via FEX_KERNELVERSION env var if future rootfs builds need more.
-  # Always rewrite Config.json on start so KernelVersion/rootfs-name changes
-  # take effect without the user having to manually delete the file.
-  local fex_kver="${FEX_KERNELVERSION:-6.1.0}"
-  printf '{"Config":{"RootFS":"%s"},"Emulated":{"KernelVersion":"%s"}}\n' \
-    "${rootfs_name}" "${fex_kver}" > "${fex_config}"
-  log "Wrote FEX Config.json at ${fex_config} (RootFS=${rootfs_name}, KernelVersion=${fex_kver})"
+  # Point FEX at the rootfs via the FEX_ROOTFS env var (verified working).
+  export FEX_ROOTFS="${rootfs_dir}"
+  log "FEX_ROOTFS=${FEX_ROOTFS}"
 
   # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup.
   mkdir -p /mnt/server/.cache/mods \
