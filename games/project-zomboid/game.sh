@@ -89,14 +89,20 @@ build_startup_command() {
       )
       ;;
     dyarven)
-      # Exact match for the systemd unit in Dyarven/zomboid-server-on-arm:
-      # SerialGC, -UseCompressedOops, TieredStopAtLevel=1 (C1 only, no C2).
-      # Do NOT add -UseCompressedClassPointers here — the reference doesn't,
-      # and adding it changed the crash shape in previous runs.
+      # Base: exact match for github.com/Dyarven/zomboid-server-on-arm
+      # (SerialGC, -UseCompressedOops, TieredStopAtLevel=1 — C1 only, no C2).
+      #
+      # Plus targeted CompileCommand=exclude entries for methods that box64's
+      # dynarec has been observed to miscompile on our host. Each was added
+      # from a real hs_err_pid*.log "Compiled method" line. If new crashes
+      # appear, grep the log for the `Compiled method (c1)` line and add the
+      # method here using slash-separated class names.
       JIT_FLAGS=(
         "-XX:+UseSerialGC"
         "-XX:-UseCompressedOops"
         "-XX:TieredStopAtLevel=1"
+        "-XX:CompileCommand=exclude,org/lwjgl/util/vector/Matrix4f,determinant3x3"
+        "-XX:CompileCommand=exclude,org/lwjgl/util/vector/Matrix4f,invert"
       )
       ;;
     interpret)
