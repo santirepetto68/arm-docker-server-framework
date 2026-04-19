@@ -92,10 +92,17 @@ build_startup_command() {
     log "FEX rootfs ready at ${rootfs_dir}"
   fi
 
-  # Write Config.json pointing FEX at the rootfs.
+  # Write Config.json pointing FEX at the rootfs. The Emulated.KernelVersion
+  # override is essential: without it, FEX reports a low osversion to the
+  # x86_64 glibc inside the rootfs, which aborts with "FATAL: kernel too old".
+  # The Ubuntu 22.04 rootfs (2025-01-08 build) needs at least 3.15; we set
+  # 6.1 to match the Oracle VPS host kernel and leave headroom. Override
+  # via FEX_KERNELVERSION env var if future rootfs builds need more.
+  local fex_kver="${FEX_KERNELVERSION:-6.1.0}"
   if [[ ! -f "${fex_config}" ]]; then
-    echo "{\"Config\":{\"RootFS\":\"${rootfs_name}\"}}" > "${fex_config}"
-    log "Generated FEX Config.json at ${fex_config}"
+    printf '{"Config":{"RootFS":"%s"},"Emulated":{"KernelVersion":"%s"}}\n' \
+      "${rootfs_name}" "${fex_kver}" > "${fex_config}"
+    log "Generated FEX Config.json at ${fex_config} (KernelVersion=${fex_kver})"
   fi
 
   # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup.
