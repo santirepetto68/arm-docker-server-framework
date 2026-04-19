@@ -25,6 +25,21 @@ MODS="${MODS:-}"
 MOD_WORKSHOP_IDS="${MOD_WORKSHOP_IDS:-}"
 
 build_startup_command() {
+  # Diagnostics — printed every start so crash-restart loops are debuggable.
+  log "=== FEX/host diagnostics ==="
+  log "uname -a: $(uname -a 2>&1 || echo 'uname failed')"
+  log "uname -r: $(uname -r 2>&1 || echo 'uname -r failed')"
+  log "FEXInterpreter --version: $(FEXInterpreter --version 2>&1 | head -1 || echo 'FEX not found')"
+  log "FEX --version: $(FEX --version 2>&1 | head -1 || echo 'FEX wrapper not found')"
+  log "Existing Config.json:"
+  if [[ -f /mnt/server/.fex/Config.json ]]; then
+    log "  $(cat /mnt/server/.fex/Config.json)"
+  else
+    log "  (not present)"
+  fi
+  log "FEX_KERNELVERSION env var: ${FEX_KERNELVERSION:-<unset>}"
+  log "============================"
+
   # Match the Quinten Q_eggs FEX egg env verbatim. Credit:
   # github.com/QuintenQVD0/Q_eggs (egg-project-zomboid-a-r-m64.json).
   export HOME="/mnt/server"
@@ -98,12 +113,12 @@ build_startup_command() {
   # The Ubuntu 22.04 rootfs (2025-01-08 build) needs at least 3.15; we set
   # 6.1 to match the Oracle VPS host kernel and leave headroom. Override
   # via FEX_KERNELVERSION env var if future rootfs builds need more.
+  # Always rewrite Config.json on start so KernelVersion/rootfs-name changes
+  # take effect without the user having to manually delete the file.
   local fex_kver="${FEX_KERNELVERSION:-6.1.0}"
-  if [[ ! -f "${fex_config}" ]]; then
-    printf '{"Config":{"RootFS":"%s"},"Emulated":{"KernelVersion":"%s"}}\n' \
-      "${rootfs_name}" "${fex_kver}" > "${fex_config}"
-    log "Generated FEX Config.json at ${fex_config} (KernelVersion=${fex_kver})"
-  fi
+  printf '{"Config":{"RootFS":"%s"},"Emulated":{"KernelVersion":"%s"}}\n' \
+    "${rootfs_name}" "${fex_kver}" > "${fex_config}"
+  log "Wrote FEX Config.json at ${fex_config} (RootFS=${rootfs_name}, KernelVersion=${fex_kver})"
 
   # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup.
   mkdir -p /mnt/server/.cache/mods \
