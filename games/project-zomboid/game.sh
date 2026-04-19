@@ -70,9 +70,18 @@ build_startup_command() {
   JIT_FLAGS=()
   case "${JIT_MODE}" in
     quinten)
+      # Quinten's Q_eggs ARM64 PZ egg flag set, plus compressed-ptrs off.
+      # Quinten's recipe alone crashes for us in C1-compiled methods that
+      # read compressed oops (e.g. DirectByteBuffer::getFloat) — box64's
+      # dynarec mistranslates the oop-decompression sequence. Turning off
+      # UseCompressedOops / UseCompressedClassPointers is Dyarven's fix,
+      # and combining the two recipes keeps G1GC + JIT speed without the
+      # dynarec crashes.
       JIT_FLAGS=(
         "-XX:-OmitStackTraceInFastThrow"
         "-XX:+UseG1GC"
+        "-XX:-UseCompressedOops"
+        "-XX:-UseCompressedClassPointers"
         "-Dsun.reflect.noInflation=true"
         "-Djdk.reflect.useDirectMethodHandle=false"
         "-XX:CompileCommand=exclude,java/lang/Class,reflectionData"
