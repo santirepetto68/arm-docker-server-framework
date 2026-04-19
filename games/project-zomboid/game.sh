@@ -60,13 +60,14 @@ build_startup_command() {
   STARTUP_CMD=""
 
   # JIT strategy: three modes selected by JVM_JIT_MODE:
-  #   "quinten" (default): G1GC + reflection tweaks + targeted reflectionData exclude.
-  #                        This is what the Pterodactyl Q_eggs ARM64 PZ egg uses in
-  #                        production. JIT stays on, runs at near-native speed.
-  #   "dyarven": SerialGC + TieredStopAtLevel=1 + compressed oops/class ptrs off.
-  #              Matches github.com/Dyarven/zomboid-server-on-arm.
+  #   "dyarven" (default): SerialGC + -UseCompressedOops + TieredStopAtLevel=1
+  #                        (C1 only, no C2). Exact match for the validated
+  #                        github.com/Dyarven/zomboid-server-on-arm systemd unit.
+  #   "quinten": G1GC + reflection tweaks + compressed ptrs off. Adapted from
+  #              the Pterodactyl Q_eggs ARM64 PZ egg. Crashed for us in
+  #              C1-compiled DirectByteBuffer reads — kept for experimentation.
   #   "interpret": -Xint, no JIT at all. Safe but very slow. Diagnostic only.
-  JIT_MODE="${JVM_JIT_MODE:-quinten}"
+  JIT_MODE="${JVM_JIT_MODE:-dyarven}"
   JIT_FLAGS=()
   case "${JIT_MODE}" in
     quinten)
@@ -88,10 +89,13 @@ build_startup_command() {
       )
       ;;
     dyarven)
+      # Exact match for the systemd unit in Dyarven/zomboid-server-on-arm:
+      # SerialGC, -UseCompressedOops, TieredStopAtLevel=1 (C1 only, no C2).
+      # Do NOT add -UseCompressedClassPointers here — the reference doesn't,
+      # and adding it changed the crash shape in previous runs.
       JIT_FLAGS=(
         "-XX:+UseSerialGC"
         "-XX:-UseCompressedOops"
-        "-XX:-UseCompressedClassPointers"
         "-XX:TieredStopAtLevel=1"
       )
       ;;
