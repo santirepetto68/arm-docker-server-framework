@@ -31,19 +31,39 @@ build_startup_command() {
   export PATH="/mnt/server/jre64/bin:${PATH}"
   export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server:/mnt/server/lib:${LD_LIBRARY_PATH:-}"
 
-  # libjsig.so installs JVM-aware signal handlers so SIGSEGV during JIT
-  # recovery doesn't crash the process. Preload only if it's actually present.
-  local jsig_path="/mnt/server/jre64/lib/libjsig.so"
-  if [[ -f "${jsig_path}" ]]; then
-    export LD_PRELOAD="${LD_PRELOAD:-}${LD_PRELOAD:+:}${jsig_path}"
+  # NOTE: libjsig.so preload is intentionally omitted. The host-side jre64/
+  # copy isn't resolvable from FEX's x86_64 ld-linux, and PZ runs fine
+  # without it under FEX. The Quinten egg preloads it because the panel
+  # injects the env line unconditionally, not because it's required.
+
+  # FEX rootfs bootstrap. The quintenqvd/pterodactyl_images:dev_fex_latest
+  # image does NOT bundle a rootfs — its entrypoint script downloads one on
+  # first run via FEXRootFSFetcher. We bypass that entrypoint, so we
+  # replicate the fetch here. Rootfs lives under /mnt/server/rootfs/ so it
+  # persists across container recreates via the data bind mount.
+  export FEX_ROOTFS_PATH="${FEX_ROOTFS_PATH:-/mnt/server/rootfs/}"
+  export FEX_APP_DATA_LOCATION="${FEX_ROOTFS_PATH}"
+  export FEX_APP_CONFIG_LOCATION="/mnt/server/"
+  export XDG_DATA_HOME="/mnt/server"
+
+  if [[ ! -d "${FEX_ROOTFS_PATH}/RootFS" ]] && [[ ! -d "/mnt/server/rootfs/Ubuntu_22_04" ]]; then
+    log "FEX rootfs not found at ${FEX_ROOTFS_PATH} — downloading (~2GB, several minutes on first run)"
+    mkdir -p "${FEX_ROOTFS_PATH}"
+    if ! FEXRootFSFetcher -y -x --distro-name=ubuntu --distro-version=22.04; then
+      log "FEXRootFSFetcher failed; server cannot start"
+      exit 1
+    fi
   fi
 
-  # Point FEX at the image-bundled rootfs. FEX reads FEX_ROOTFS directly (the
-  # envvar the FEX binary itself checks, distinct from FEX_ROOTFS_PATH which
-  # is a Pterodactyl-image-entrypoint-only convention). Allow override via
-  # FEX_ROOTFS_PATH for compatibility with the Pterodactyl naming.
-  export FEX_ROOTFS="${FEX_ROOTFS_PATH:-${FEX_ROOTFS:-/usr/local/FEX/}}"
-  log "FEX rootfs: ${FEX_ROOTFS}"
+  # Write Config.json (at FEX_APP_CONFIG_LOCATION) if the rootfs exists but
+  # the config doesn't — matches the entrypoint's behavior.
+  local fex_config="/mnt/server/Config.json"
+  if { [[ -f "/mnt/server/rootfs/Ubuntu_22_04/break_chroot.sh" ]] || \
+       [[ -f "${FEX_ROOTFS_PATH}/RootFS/Ubuntu_22_04/break_chroot.sh" ]]; } && \
+     [[ ! -f "${fex_config}" ]]; then
+    echo '{"Config":{"RootFS":"Ubuntu_22_04"}}' > "${fex_config}"
+    log "Generated FEX Config.json at ${fex_config}"
+  fi
 
   # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup.
   mkdir -p /mnt/server/.cache/mods \

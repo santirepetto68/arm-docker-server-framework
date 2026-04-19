@@ -107,11 +107,12 @@ services:
       # from the rootfs's glibc when FEX reports too low an OS ABI version.
       # Override via instances/project-zomboid.env if needed.
       - FEX_KERNELVERSION=${FEX_KERNELVERSION:-6.1}
-      # FEX_ROOTFS_PATH: point FEX at the image-bundled rootfs. The
-      # quintenqvd/pterodactyl_images:dev_fex_latest image ships a rootfs at
-      # /usr/local/FEX/. Override to a mounted path (ending in /) to share a
-      # rootfs between containers.
-      - FEX_ROOTFS_PATH=${FEX_ROOTFS_PATH:-/usr/local/FEX/}
+      # FEX_ROOTFS_PATH: where FEX looks for its x86_64 rootfs. The FEX
+      # image does NOT bundle one — it's downloaded on first run via
+      # FEXRootFSFetcher (~2GB). Defaulting to /mnt/server/rootfs/ persists
+      # the rootfs inside the PZ data volume. Override (ending in /) to
+      # share a rootfs between multiple FEX-based containers.
+      - FEX_ROOTFS_PATH=${FEX_ROOTFS_PATH:-/mnt/server/rootfs/}
     ports:
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/udp"
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/tcp"
