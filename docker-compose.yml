@@ -117,6 +117,14 @@ services:
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/udp"
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/tcp"
       - "${PZ_STEAM_PORT:-16262}:${PZ_STEAM_PORT:-16262}/udp"
+    # FEX 2604 (Apr 2026) release notes call out a Docker seccomp filter bug
+    # that caused "really bizarre issues" and crashes when FEX runs under the
+    # default Docker seccomp profile. supersunho/fex-emu:ubuntu-24.04 ships
+    # FEX 2601 which predates the fix, so we relax seccomp here. Safe for a
+    # single-purpose game-server container; revisit if we upgrade to a FEX
+    # build that includes the fix.
+    security_opt:
+      - seccomp=unconfined
     volumes:
       - ./data/project-zomboid:/mnt/server
       - ./scripts:/project/scripts:ro
