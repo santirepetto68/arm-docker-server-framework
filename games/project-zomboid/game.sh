@@ -110,6 +110,23 @@ build_startup_command() {
   export FEX_ROOTFS="${rootfs_dir}"
   log "FEX_ROOTFS=${FEX_ROOTFS}"
 
+  # Start FEXServer explicitly. FEXInterpreter is supposed to auto-launch it,
+  # but under this image that autostart sometimes fails, leaving the client
+  # looping on "Couldn't connect to FEXServer socket" until it gives up.
+  # Launching it ourselves is cheap and deterministic — it idles if already
+  # running (socket at /tmp/<uid>.FEXServer.Socket).
+  local fexserver="/usr/local/fex/bin/FEXServer"
+  if [[ -x "${fexserver}" ]]; then
+    if ! /usr/local/fex/bin/FEXpidof 2>/dev/null | grep -q .; then
+      log "Starting FEXServer"
+      "${fexserver}" >/dev/null 2>&1 &
+      disown
+      sleep 1
+    else
+      log "FEXServer already running"
+    fi
+  fi
+
   # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup.
   mkdir -p /mnt/server/.cache/mods \
            /mnt/server/.cache/Workshop \
