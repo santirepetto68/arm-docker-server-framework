@@ -50,10 +50,12 @@ build_startup_command() {
   # Priority:
   #   1. FEX_ROOTFS_PATH env var (explicit override — e.g. shared host mount).
   #   2. Image-bundled rootfs at /opt/fex-rootfs (supersunho/fex-emu ships this).
-  #   3. On-demand download to /mnt/server/.fex/RootFS/<distro> (fallback for
+  #   3. Per-user rootfs under ~steam/.fex-emu/RootFS (teriyakigod/steamcmd
+  #      ships Ubuntu_22_04 here; FEX's standard default location).
+  #   4. On-demand download to /mnt/server/.fex/RootFS/<distro> (fallback for
   #      images without a bundled rootfs; requires curl + python3 + unsquashfs).
   #
-  # FEX_ROOTFS_DISTRO only matters for path 3; ignored if 1 or 2 resolves.
+  # FEX_ROOTFS_DISTRO only matters for path 4; ignored if 1-3 resolves.
   local rootfs_dir=""
 
   if [[ -n "${FEX_ROOTFS_PATH:-}" && -d "${FEX_ROOTFS_PATH%/}" ]]; then
@@ -72,7 +74,17 @@ build_startup_command() {
       rootfs_dir="${subdirs[0]%/}"
     fi
     log "Using image-bundled FEX rootfs: ${rootfs_dir}"
-  else
+  elif [[ -d /home/steam/.fex-emu/RootFS ]]; then
+    # teriyakigod/steamcmd:arm64 ships one rootfs (Ubuntu_22_04) under the
+    # steam user's FEX config dir. Pick the first populated subdir.
+    local steam_subdirs=( /home/steam/.fex-emu/RootFS/*/ )
+    if (( ${#steam_subdirs[@]} >= 1 )) && [[ -d "${steam_subdirs[0]}usr" ]]; then
+      rootfs_dir="${steam_subdirs[0]%/}"
+      log "Using teriyakigod-bundled FEX rootfs: ${rootfs_dir}"
+    fi
+  fi
+
+  if [[ -z "${rootfs_dir}" ]]; then
     local rootfs_distro="${FEX_ROOTFS_DISTRO:-Ubuntu 24.04}"
     local rootfs_name
     rootfs_name="$(echo "${rootfs_distro}" | tr ' .' '_')"
@@ -111,14 +123,18 @@ build_startup_command() {
   log "FEX_ROOTFS=${FEX_ROOTFS}"
 
   # Start FEXServer explicitly. FEXInterpreter is supposed to auto-launch it,
-  # but under this image that autostart sometimes fails, leaving the client
-  # looping on "Couldn't connect to FEXServer socket" until it gives up.
-  # Launching it ourselves is cheap and deterministic — it idles if already
-  # running (socket at /tmp/<uid>.FEXServer.Socket).
-  local fexserver="/usr/local/fex/bin/FEXServer"
-  if [[ -x "${fexserver}" ]]; then
-    if ! /usr/local/fex/bin/FEXpidof 2>/dev/null | grep -q .; then
-      log "Starting FEXServer"
+  # but under some images that autostart fails, leaving the client looping on
+  # "Couldn't connect to FEXServer socket" until it gives up. Launching it
+  # ourselves is cheap and deterministic — it idles if already running
+  # (socket at /tmp/<uid>.FEXServer.Socket). Path differs per image:
+  # teriyakigod/steamcmd:arm64 puts FEX in /usr/bin, supersunho in /usr/local/fex/bin.
+  local fexserver=""
+  for cand in /usr/bin/FEXServer /usr/local/fex/bin/FEXServer; do
+    if [[ -x "${cand}" ]]; then fexserver="${cand}"; break; fi
+  done
+  if [[ -n "${fexserver}" ]]; then
+    if ! pgrep -x FEXServer >/dev/null 2>&1; then
+      log "Starting ${fexserver}"
       "${fexserver}" >/dev/null 2>&1 &
       disown
       sleep 1
