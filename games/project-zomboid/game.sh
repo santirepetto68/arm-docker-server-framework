@@ -32,12 +32,18 @@ build_startup_command() {
   export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server:/mnt/server/lib:${LD_LIBRARY_PATH:-}"
 
   # libjsig.so installs JVM-aware signal handlers so SIGSEGV during JIT
-  # recovery doesn't crash the process. The stock ProjectZomboid64 launcher
-  # already references it; preloading here matches Quinten's egg.
+  # recovery doesn't crash the process. Preload only if it's actually present.
   local jsig_path="/mnt/server/jre64/lib/libjsig.so"
   if [[ -f "${jsig_path}" ]]; then
     export LD_PRELOAD="${LD_PRELOAD:-}${LD_PRELOAD:+:}${jsig_path}"
   fi
+
+  # Point FEX at the image-bundled rootfs. FEX reads FEX_ROOTFS directly (the
+  # envvar the FEX binary itself checks, distinct from FEX_ROOTFS_PATH which
+  # is a Pterodactyl-image-entrypoint-only convention). Allow override via
+  # FEX_ROOTFS_PATH for compatibility with the Pterodactyl naming.
+  export FEX_ROOTFS="${FEX_ROOTFS_PATH:-${FEX_ROOTFS:-/usr/local/FEX/}}"
+  log "FEX rootfs: ${FEX_ROOTFS}"
 
   # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup.
   mkdir -p /mnt/server/.cache/mods \
