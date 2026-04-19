@@ -66,8 +66,15 @@ cd "$TEMP_DIR"
 rm -rf box86
 
 echo "Cloning and building box64"
+# Pin to the v0.4.0 tag (Jan 2025) instead of master. Master HEAD was observed
+# to miscompile JIT'd Java (Zulu 17) under BOX64_JVM=1 even with BIGBLOCK=0 /
+# STRONGMEM=1 — every crash landed at the same translated block address
+# (0x30060013) across unrelated methods. v0.4.0 is the most recent stable
+# release with BOX64_JVM heuristics. Override with BOX64_GIT_REF if needed.
+BOX64_GIT_REF="${BOX64_GIT_REF:-v0.4.0}"
 git clone https://github.com/ptitSeb/box64
 cd box64
+git checkout "${BOX64_GIT_REF}"
 mkdir build && cd build
 cmake .. ${BOX_CMAKE_FLAGS} -DCMAKE_BUILD_TYPE=RelWithDebInfo
 make -j"$NUM_JOBS"
