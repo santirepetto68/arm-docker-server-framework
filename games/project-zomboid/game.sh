@@ -27,11 +27,22 @@ MOD_WORKSHOP_IDS="${MOD_WORKSHOP_IDS:-}"
 build_startup_command() {
   # Diagnostics — printed every start so crash-restart loops are debuggable.
   log "=== FEX/host diagnostics ==="
-  log "uname -a: $(uname -a 2>&1 || echo 'uname failed')"
-  log "uname -r: $(uname -r 2>&1 || echo 'uname -r failed')"
-  log "FEXInterpreter --version: $(FEXInterpreter --version 2>&1 | head -1 || echo 'FEX not found')"
-  log "FEX --version: $(FEX --version 2>&1 | head -1 || echo 'FEX wrapper not found')"
-  log "Existing Config.json:"
+  log "uname -a: $(uname -a 2>&1 || true)"
+  log "uname -r: $(uname -r 2>&1 || true)"
+  local fex_bin_path
+  fex_bin_path="$(command -v FEX 2>/dev/null || command -v FEXInterpreter 2>/dev/null || echo 'not on PATH')"
+  log "FEX binary: ${fex_bin_path}"
+  local fex_ver
+  fex_ver="$(FEXInterpreter --version 2>&1 | head -1 || true)"
+  [[ -z "${fex_ver}" ]] && fex_ver="$(FEX --version 2>&1 | head -1 || true)"
+  log "FEX version: ${fex_ver:-unknown}"
+  log "Existing Config.json (XDG path):"
+  if [[ -f /mnt/server/.fex/fex-emu/Config.json ]]; then
+    log "  $(cat /mnt/server/.fex/fex-emu/Config.json)"
+  else
+    log "  (not present)"
+  fi
+  log "Old-path Config.json (should be absent after cleanup):"
   if [[ -f /mnt/server/.fex/Config.json ]]; then
     log "  $(cat /mnt/server/.fex/Config.json)"
   else
@@ -66,14 +77,22 @@ build_startup_command() {
   # recreates via the data bind mount. We deliberately do NOT use
   # FEXRootFSFetcher — it's an interactive tool that spawns zenity and fails
   # silently in headless containers. Instead, curl the tarball directly.
-  export FEX_APP_DATA_LOCATION="/mnt/server/.fex/"
-  export FEX_APP_CONFIG_LOCATION="/mnt/server/.fex/"
+  # FEX actually resolves its rootfs from a Config.json at XDG_CONFIG_HOME
+  # (i.e. ~/.fex-emu/Config.json), not from the FEX_APP_CONFIG_LOCATION env
+  # var that the Pterodactyl image's entrypoint sets — that was just for
+  # Pterodactyl's convenience. We write directly to the XDG path.
+  export HOME="/mnt/server"
   export XDG_DATA_HOME="/mnt/server/.fex"
-  mkdir -p "${FEX_APP_DATA_LOCATION}/RootFS" "${FEX_APP_CONFIG_LOCATION}"
+  export XDG_CONFIG_HOME="/mnt/server/.fex"
+  export FEX_APP_DATA_LOCATION="/mnt/server/.fex/"
+  export FEX_APP_CONFIG_LOCATION="/mnt/server/.fex/fex-emu/"
+  mkdir -p "/mnt/server/.fex/RootFS" \
+           "/mnt/server/.fex/fex-emu"
 
   local rootfs_name="Ubuntu_22_04"
-  local rootfs_dir="${FEX_APP_DATA_LOCATION}RootFS/${rootfs_name}"
-  local fex_config="${FEX_APP_CONFIG_LOCATION}Config.json"
+  local rootfs_dir="/mnt/server/.fex/RootFS/${rootfs_name}"
+  # Write Config.json at the XDG path FEX actually reads (via $XDG_CONFIG_HOME/fex-emu/Config.json).
+  local fex_config="/mnt/server/.fex/fex-emu/Config.json"
 
   if [[ ! -d "${rootfs_dir}" ]]; then
     log "FEX rootfs not found — resolving download URL"
@@ -99,8 +118,8 @@ build_startup_command() {
     log "Extracting rootfs squashfs to ${rootfs_dir}"
     if ! unsquashfs -f -d "${rootfs_dir}" "${tmp_sqsh}" >/dev/null; then
       log "unsquashfs failed — keeping ${tmp_sqsh} as direct-mount fallback"
-      mv "${tmp_sqsh}" "${FEX_APP_DATA_LOCATION}RootFS/${rootfs_name}.sqsh"
-      rootfs_dir="${FEX_APP_DATA_LOCATION}RootFS/${rootfs_name}.sqsh"
+      mv "${tmp_sqsh}" "/mnt/server/.fex/RootFS/${rootfs_name}.sqsh"
+      rootfs_dir="/mnt/server/.fex/RootFS/${rootfs_name}.sqsh"
     else
       rm -f "${tmp_sqsh}"
     fi
