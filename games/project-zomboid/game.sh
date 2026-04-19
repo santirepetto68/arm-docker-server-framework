@@ -61,18 +61,29 @@ build_startup_command() {
   local fex_config="${FEX_APP_CONFIG_LOCATION}Config.json"
 
   if [[ ! -d "${rootfs_dir}" ]]; then
-    log "FEX rootfs not found — downloading (~2GB, several minutes on first run)"
-    local rootfs_url="https://rootfs.fex-emu.com/RootFS/${rootfs_name}.sqsh"
+    log "FEX rootfs not found — resolving download URL"
+    # The rootfs URLs are date-stamped and rotate over time. The FEX-Emu
+    # project publishes a catalog at the URL below; we parse out the
+    # Ubuntu 22.04 SquashFS entry to stay current.
+    local catalog_url="https://raw.githubusercontent.com/FEX-Emu/RootFS/refs/heads/main/RootFS_links.json"
+    local rootfs_url
+    rootfs_url="$(curl -fsSL "${catalog_url}" | \
+                  python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["v1"]["Ubuntu 22.04 (SquashFS)"]["URL"])' 2>/dev/null)"
+    if [[ -z "${rootfs_url}" ]]; then
+      log "Failed to resolve FEX rootfs URL from ${catalog_url}"
+      exit 1
+    fi
+
+    log "Downloading FEX rootfs from ${rootfs_url} (~2GB, several minutes)"
     local tmp_sqsh="/tmp/${rootfs_name}.sqsh"
     if ! curl -fSL --retry 3 -o "${tmp_sqsh}" "${rootfs_url}"; then
-      log "Failed to download FEX rootfs from ${rootfs_url}"
+      log "Failed to download FEX rootfs"
       exit 1
     fi
     mkdir -p "${rootfs_dir}"
-    log "Extracting rootfs squashfs to ${rootfs_dir} (requires unsquashfs)"
-    if ! unsquashfs -d "${rootfs_dir}" "${tmp_sqsh}" >/dev/null; then
-      log "unsquashfs failed — keeping ${tmp_sqsh} and letting FEX mount .sqsh directly"
-      # Fallback: FEX can consume a .sqsh file directly if named correctly.
+    log "Extracting rootfs squashfs to ${rootfs_dir}"
+    if ! unsquashfs -f -d "${rootfs_dir}" "${tmp_sqsh}" >/dev/null; then
+      log "unsquashfs failed — keeping ${tmp_sqsh} as direct-mount fallback"
       mv "${tmp_sqsh}" "${FEX_APP_DATA_LOCATION}RootFS/${rootfs_name}.sqsh"
       rootfs_dir="${FEX_APP_DATA_LOCATION}RootFS/${rootfs_name}.sqsh"
     else
