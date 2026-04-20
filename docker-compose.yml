@@ -90,6 +90,12 @@ services:
   project-zomboid:
     extends:
       service: server
+    # Override the runtime image: PZ needs FEX-Emu (box64 crashes PZ's JIT).
+    # supersunho/fex-emu ships an x86_64 rootfs at /opt/fex-rootfs which game.sh
+    # prefers. If you swap to an image without a bundled rootfs, set
+    # FEX_ROOTFS_PATH or let game.sh download one (needs curl + python3 +
+    # unsquashfs in the image).
+    image: ${PZ_RUNTIME_IMAGE:-supersunho/fex-emu:ubuntu-24.04}
     container_name: ${COMPOSE_PROJECT_NAME:-gameserver}_project-zomboid_server
     depends_on:
       project-zomboid-install:
@@ -100,10 +106,25 @@ services:
         required: false
     environment:
       - GAME_ID=project-zomboid
+      # FEX rootfs resolution order (see games/project-zomboid/game.sh):
+      #   1. FEX_ROOTFS_PATH if set to a real dir
+      #   2. image-bundled /opt/fex-rootfs (supersunho/fex-emu has this)
+      #   3. on-demand download to /mnt/server/.fex/RootFS/<distro>
+      # FEX_ROOTFS_DISTRO only applies to path 3.
+      - FEX_ROOTFS_DISTRO=${FEX_ROOTFS_DISTRO:-Ubuntu 24.04}
+      - FEX_ROOTFS_PATH=${FEX_ROOTFS_PATH:-}
     ports:
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/udp"
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/tcp"
       - "${PZ_STEAM_PORT:-16262}:${PZ_STEAM_PORT:-16262}/udp"
+    # FEX 2604 (Apr 2026) release notes call out a Docker seccomp filter bug
+    # that caused "really bizarre issues" and crashes when FEX runs under the
+    # default Docker seccomp profile. supersunho/fex-emu:ubuntu-24.04 ships
+    # FEX 2601 which predates the fix, so we relax seccomp here. Safe for a
+    # single-purpose game-server container; revisit if we upgrade to a FEX
+    # build that includes the fix.
+    security_opt:
+      - seccomp=unconfined
     volumes:
       - ./data/project-zomboid:/mnt/server
       - ./scripts:/project/scripts:ro

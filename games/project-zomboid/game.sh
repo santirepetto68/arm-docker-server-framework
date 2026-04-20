@@ -4,12 +4,14 @@
 #   build_startup_command()  — sets STARTUP_CMD (string) and STARTUP_FLAGS (array)
 #   shutdown_server()        — graceful shutdown using SERVER_PID global
 #
-# Launch strategy: call `java` directly under box64 instead of the
-# ProjectZomboid64 shell launcher. The launcher applies JVM flags from
-# ProjectZomboid64.json (ZGC, compressed oops, bigblock-friendly code paths)
-# that make the JVM crash under box64's x86→ARM dynarec. The flag set below
-# is what the community found to actually run PZ reliably on ARM64 —
-# credit: github.com/Dyarven/zomboid-server-on-arm.
+# Launch strategy: run the stock ProjectZomboid64 shell launcher under FEX-Emu
+# (GAME_LAUNCHER="FEX" in game.env). Credit: QuintenQVD0/Q_eggs ARM64 PZ egg
+# (quintenqvd/pterodactyl_images:dev_fex_latest).
+#
+# History: we previously invoked `jre64/bin/java` directly under box64 with a
+# curated JVM flag set, because ProjectZomboid64.json's flags (ZGC, compressed
+# oops) make box64's dynarec mistranslate JIT'd code. FEX handles those flags
+# correctly, so under FEX we use the launcher as-is and let it read its JSON.
 
 # Defaults for Project Zomboid variables
 SERVER_PORT="${SERVER_PORT:-16261}"
@@ -22,121 +24,135 @@ ADDITIONAL_ARGS="${ADDITIONAL_ARGS:-}"
 MODS="${MODS:-}"
 MOD_WORKSHOP_IDS="${MOD_WORKSHOP_IDS:-}"
 
-# JVM heap — PZ recommends at least 4G. Tunable per instance.
-JVM_XMS="${JVM_XMS:-4g}"
-JVM_XMX="${JVM_XMX:-8g}"
-
 build_startup_command() {
-  # Match the working arm64 script's env as closely as possible. Credit:
-  # github.com/Dyarven/zomboid-server-on-arm.
-  #
-  # Notable differences from the working setup that we deliberately keep:
-  #  - cachedir stays at /mnt/server/.cache so config/saves live on the
-  #    bind-mounted volume instead of a container-local $HOME.
-  #  - We still export HOME so PZ's internal "where do I put Zomboid/"
-  #    logic has something to anchor to.
-  export HOME="/mnt/server"
+  # Diagnostics — printed every start so crash-restart loops are debuggable.
+  log "=== FEX/host diagnostics ==="
+  log "uname -r: $(uname -r 2>&1 || true)"
+  log "FEX binary: $(command -v FEX 2>/dev/null || command -v FEXInterpreter 2>/dev/null || echo 'not on PATH')"
+  log "FEX_ROOTFS_DISTRO: ${FEX_ROOTFS_DISTRO:-<default: Ubuntu 24.04>}"
+  log "FEX_ROOTFS_PATH: ${FEX_ROOTFS_PATH:-<unset>}"
+  log "/opt/fex-rootfs: $([[ -d /opt/fex-rootfs ]] && echo present || echo absent)"
+  log "============================"
 
-  # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup
-  # and closedir() on a missing dir crashes under box64.
+  # Match the Quinten Q_eggs FEX egg env verbatim. Credit:
+  # github.com/QuintenQVD0/Q_eggs (egg-project-zomboid-a-r-m64.json).
+  export HOME="/mnt/server"
+  export PATH="/mnt/server/jre64/bin:${PATH}"
+  export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server:/mnt/server/lib:${LD_LIBRARY_PATH:-}"
+
+  # NOTE: libjsig.so preload is intentionally omitted. The host-side jre64/
+  # copy isn't resolvable from FEX's x86_64 ld-linux, and PZ runs fine
+  # without it under FEX. The Quinten egg preloads it because the panel
+  # injects the env line unconditionally, not because it's required.
+
+  # FEX rootfs resolution.
+  #
+  # Priority:
+  #   1. FEX_ROOTFS_PATH env var (explicit override — e.g. shared host mount).
+  #   2. Image-bundled rootfs at /opt/fex-rootfs (supersunho/fex-emu ships this).
+  #   3. Per-user rootfs under ~steam/.fex-emu/RootFS (teriyakigod/steamcmd
+  #      ships Ubuntu_22_04 here; FEX's standard default location).
+  #   4. On-demand download to /mnt/server/.fex/RootFS/<distro> (fallback for
+  #      images without a bundled rootfs; requires curl + python3 + unsquashfs).
+  #
+  # FEX_ROOTFS_DISTRO only matters for path 4; ignored if 1-3 resolves.
+  local rootfs_dir=""
+
+  if [[ -n "${FEX_ROOTFS_PATH:-}" && -d "${FEX_ROOTFS_PATH%/}" ]]; then
+    rootfs_dir="${FEX_ROOTFS_PATH%/}"
+    log "Using FEX_ROOTFS_PATH override: ${rootfs_dir}"
+  elif [[ -d /opt/fex-rootfs ]]; then
+    # supersunho/fex-emu wraps the rootfs in a per-distro subdir, e.g.
+    # /opt/fex-rootfs/Ubuntu_24_04/. FEX needs the inner dir (where usr/ lib/
+    # live), not the parent. If we find exactly one subdir, descend; otherwise
+    # use /opt/fex-rootfs directly (covers flatter images).
+    rootfs_dir="/opt/fex-rootfs"
+    local subdirs=( /opt/fex-rootfs/*/ )
+    if (( ${#subdirs[@]} == 1 )) && [[ -d /opt/fex-rootfs/usr ]]; then
+      : # /opt/fex-rootfs itself is the rootfs
+    elif (( ${#subdirs[@]} == 1 )) && [[ -d "${subdirs[0]}usr" ]]; then
+      rootfs_dir="${subdirs[0]%/}"
+    fi
+    log "Using image-bundled FEX rootfs: ${rootfs_dir}"
+  elif [[ -d /home/steam/.fex-emu/RootFS ]]; then
+    # teriyakigod/steamcmd:arm64 ships one rootfs (Ubuntu_22_04) under the
+    # steam user's FEX config dir. Pick the first populated subdir.
+    local steam_subdirs=( /home/steam/.fex-emu/RootFS/*/ )
+    if (( ${#steam_subdirs[@]} >= 1 )) && [[ -d "${steam_subdirs[0]}usr" ]]; then
+      rootfs_dir="${steam_subdirs[0]%/}"
+      log "Using teriyakigod-bundled FEX rootfs: ${rootfs_dir}"
+    fi
+  fi
+
+  if [[ -z "${rootfs_dir}" ]]; then
+    local rootfs_distro="${FEX_ROOTFS_DISTRO:-Ubuntu 24.04}"
+    local rootfs_name
+    rootfs_name="$(echo "${rootfs_distro}" | tr ' .' '_')"
+    rootfs_dir="/mnt/server/.fex/RootFS/${rootfs_name}"
+    mkdir -p "/mnt/server/.fex/RootFS"
+
+    if [[ ! -d "${rootfs_dir}" ]]; then
+      log "No bundled rootfs and none cached — downloading '${rootfs_distro}'"
+      local catalog_url="https://raw.githubusercontent.com/FEX-Emu/RootFS/refs/heads/main/RootFS_links.json"
+      local rootfs_url
+      rootfs_url="$(curl -fsSL "${catalog_url}" | \
+                    python3 -c "import json,sys; d=json.load(sys.stdin); print(d['v1']['${rootfs_distro} (SquashFS)']['URL'])" 2>/dev/null)"
+      if [[ -z "${rootfs_url}" ]]; then
+        log "Failed to resolve FEX rootfs URL for '${rootfs_distro}' from ${catalog_url}"
+        exit 1
+      fi
+
+      log "Downloading FEX rootfs from ${rootfs_url} (~1-2GB, several minutes)"
+      local tmp_sqsh="/tmp/${rootfs_name}.sqsh"
+      if ! curl -fSL --retry 3 -o "${tmp_sqsh}" "${rootfs_url}"; then
+        log "Failed to download FEX rootfs"
+        exit 1
+      fi
+      mkdir -p "${rootfs_dir}"
+      log "Extracting rootfs squashfs to ${rootfs_dir}"
+      if ! unsquashfs -f -d "${rootfs_dir}" "${tmp_sqsh}" >/dev/null; then
+        log "unsquashfs failed (is squashfs-tools installed in the image?)"
+        exit 1
+      fi
+      rm -f "${tmp_sqsh}"
+      log "FEX rootfs ready at ${rootfs_dir}"
+    fi
+  fi
+
+  export FEX_ROOTFS="${rootfs_dir}"
+  log "FEX_ROOTFS=${FEX_ROOTFS}"
+
+  # Start FEXServer explicitly. FEXInterpreter is supposed to auto-launch it,
+  # but under some images that autostart fails, leaving the client looping on
+  # "Couldn't connect to FEXServer socket" until it gives up. Launching it
+  # ourselves is cheap and deterministic — it idles if already running
+  # (socket at /tmp/<uid>.FEXServer.Socket). Path differs per image:
+  # teriyakigod/steamcmd:arm64 puts FEX in /usr/bin, supersunho in /usr/local/fex/bin.
+  local fexserver=""
+  for cand in /usr/bin/FEXServer /usr/local/fex/bin/FEXServer; do
+    if [[ -x "${cand}" ]]; then fexserver="${cand}"; break; fi
+  done
+  if [[ -n "${fexserver}" ]]; then
+    if ! pgrep -x FEXServer >/dev/null 2>&1; then
+      log "Starting ${fexserver}"
+      "${fexserver}" >/dev/null 2>&1 &
+      disown
+      sleep 1
+    else
+      log "FEXServer already running"
+    fi
+  fi
+
+  # Pre-create Workshop/mod staging dirs — PZ enumerates them on startup.
   mkdir -p /mnt/server/.cache/mods \
            /mnt/server/.cache/Workshop \
            /mnt/server/steamapps/workshop/content/108600
 
-  # box64 env that matches the Dyarven systemd unit verbatim. Don't add
-  # BOX64_DYNAREC_SAFEFLAGS / BOX64_ALLOWMISSINGLIBS / BOX64_EMULATED_LIBS
-  # here — the working script doesn't use them and adding them has been
-  # making things worse, not better.
-  export BOX64_JVM=1
-  export BOX64_DYNAREC_BIGBLOCK=0
-  export BOX64_DYNAREC_STRONGMEM=1
-
-  # LD_LIBRARY_PATH — mirror the working script exactly. The trailing `.`
-  # (CWD) matters: PZ's native loader looks for some libs relative to CWD.
-  export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server/jre64/lib:."
-
-  # We invoke java directly (GAME_BINARY=jre64/bin/java), so STARTUP_CMD stays
-  # empty and all JVM + PZ args go through STARTUP_FLAGS.
+  # We run the stock launcher (GAME_BINARY=ProjectZomboid64) under FEX.
+  # All JVM flags come from ProjectZomboid64.json in the install dir; tune
+  # heap and GC by editing that file.
   STARTUP_CMD=""
-
-  # JIT strategy: three modes selected by JVM_JIT_MODE:
-  #   "dyarven" (default): SerialGC + -UseCompressedOops + TieredStopAtLevel=1
-  #                        (C1 only, no C2). Exact match for the validated
-  #                        github.com/Dyarven/zomboid-server-on-arm systemd unit.
-  #   "quinten": G1GC + reflection tweaks + compressed ptrs off. Adapted from
-  #              the Pterodactyl Q_eggs ARM64 PZ egg. Crashed for us in
-  #              C1-compiled DirectByteBuffer reads — kept for experimentation.
-  #   "interpret": -Xint, no JIT at all. Safe but very slow. Diagnostic only.
-  JIT_MODE="${JVM_JIT_MODE:-dyarven}"
-  JIT_FLAGS=()
-  case "${JIT_MODE}" in
-    quinten)
-      # Quinten's Q_eggs ARM64 PZ egg flag set, plus compressed-ptrs off.
-      # Quinten's recipe alone crashes for us in C1-compiled methods that
-      # read compressed oops (e.g. DirectByteBuffer::getFloat) — box64's
-      # dynarec mistranslates the oop-decompression sequence. Turning off
-      # UseCompressedOops / UseCompressedClassPointers is Dyarven's fix,
-      # and combining the two recipes keeps G1GC + JIT speed without the
-      # dynarec crashes.
-      JIT_FLAGS=(
-        "-XX:-OmitStackTraceInFastThrow"
-        "-XX:+UseG1GC"
-        "-XX:-UseCompressedOops"
-        "-XX:-UseCompressedClassPointers"
-        "-Dsun.reflect.noInflation=true"
-        "-Djdk.reflect.useDirectMethodHandle=false"
-        "-XX:CompileCommand=exclude,java/lang/Class,reflectionData"
-      )
-      ;;
-    dyarven)
-      # Base: exact match for github.com/Dyarven/zomboid-server-on-arm
-      # (SerialGC, -UseCompressedOops, TieredStopAtLevel=1 — C1 only, no C2).
-      #
-      # Plus targeted CompileCommand=exclude entries for methods that box64's
-      # dynarec has been observed to miscompile on our host. Each was added
-      # from a real hs_err_pid*.log "Compiled method" line. If new crashes
-      # appear, grep the log for the `Compiled method (c1)` line and add the
-      # method here using slash-separated class names.
-      JIT_FLAGS=(
-        "-XX:+UseSerialGC"
-        "-XX:-UseCompressedOops"
-        "-XX:TieredStopAtLevel=1"
-        "-XX:CompileCommand=exclude,org/lwjgl/util/vector/Matrix4f,determinant3x3"
-        "-XX:CompileCommand=exclude,org/lwjgl/util/vector/Matrix4f,invert"
-      )
-      ;;
-    interpret)
-      JIT_FLAGS=("-Xint")
-      ;;
-    *)
-      log "Unknown JVM_JIT_MODE='${JIT_MODE}', falling back to 'quinten'"
-      JIT_FLAGS=(
-        "-XX:-OmitStackTraceInFastThrow"
-        "-XX:+UseG1GC"
-        "-Dsun.reflect.noInflation=true"
-        "-Djdk.reflect.useDirectMethodHandle=false"
-        "-XX:CompileCommand=exclude,java/lang/Class,reflectionData"
-      )
-      ;;
-  esac
-
   STARTUP_FLAGS=(
-    "-Djava.awt.headless=true"
-    "-Xms${JVM_XMS}"
-    "-Xmx${JVM_XMX}"
-    "-XX:ActiveProcessorCount=4"
-    "-Dzomboid.steam=1"
-    "-Dzomboid.znetlog=1"
-    "-Djava.library.path=linux64/:natives/"
-    "-Djava.security.egd=file:/dev/urandom"
-    "${JIT_FLAGS[@]}"
-    # Classpath: include all jars in java/ (Guava, Steamworks4J, trove, etc.)
-    # plus projectzomboid.jar. Dyarven's script uses just `java/:java/projectzomboid.jar`
-    # but that relies on their java/ dir being flat-extracted; our SteamCMD install
-    # keeps dependencies as separate jars, so we need the `java/*` glob.
-    "-cp" "java/:java/*:java/projectzomboid.jar"
-    "zombie.network.GameServer"
-    # --- PZ server args below this line ---
     "-port" "${SERVER_PORT}"
     "-udpport" "${STEAM_PORT}"
     "-cachedir=/mnt/server/.cache"

@@ -43,6 +43,13 @@ log "Running SteamCMD install/update for app ${APP_ID}"
 cd "${STEAMCMD_DIR}"
 export HOME="${SERVER_DIR}"
 
+# Pre-warm SteamCMD: run once with just +quit so it can self-update and
+# relaunch. Without this, the self-update triggered by the real command
+# consumes our args on the first exec, then the relaunched binary drops
+# into the interactive REPL ("-- type 'quit' to exit --") and hangs.
+log "Pre-warming SteamCMD (self-update pass)"
+./steamcmd.sh +quit || true
+
 # Some games (e.g. Project Zomboid) split their install into per-platform depots.
 # Under box64 emulation SteamCMD can misdetect the host platform and skip depots
 # (for PZ this means the bundled jre64/ tree is missing). Allow games to force a
