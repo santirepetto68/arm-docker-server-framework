@@ -31,7 +31,7 @@ if [[ -f "${INSTANCE_ENV}" ]]; then
 fi
 
 BACKUP_DIR="${PROJECT_ROOT}/backups/${GAME_ID}"
-DATA_DIR="${PROJECT_ROOT}/data/server"
+DATA_DIR="${PROJECT_ROOT}/data/${GAME_ID}"
 SAVE_DIR="${DATA_DIR}/${GAME_SAVE_DIR}"
 
 mkdir -p "${BACKUP_DIR}"

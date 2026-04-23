@@ -56,6 +56,16 @@ build_startup_command
 # Set up shutdown trap (shutdown_server defined in game.sh)
 trap shutdown_server TERM INT
 
+# Rotate JVM crash dumps so restarts don't overwrite the previous session's report.
+# The JVM always writes hs_err_pidN.log to the working dir; under our container
+# the process is always pid 42, so the filename is deterministic.
+for hs_err in "${SERVER_DIR}"/hs_err_pid*.log; do
+  [[ -f "${hs_err}" ]] || continue
+  rotated="${hs_err%.log}_$(date '+%Y%m%d-%H%M%S').log"
+  mv "${hs_err}" "${rotated}"
+  log "Rotated crash dump: $(basename "${hs_err}") -> $(basename "${rotated}")"
+done
+
 # Launch server
 cd "${SERVER_DIR}/${GAME_WORKING_DIR}"
 log "Starting ${GAME_NAME} dedicated server"
