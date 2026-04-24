@@ -57,14 +57,15 @@ build_startup_command
 trap shutdown_server TERM INT
 
 # Rotate JVM crash dumps so restarts don't overwrite the previous session's report.
-# The JVM always writes hs_err_pidN.log to the working dir; under our container
-# the process is always pid 42, so the filename is deterministic.
+shopt -s nullglob
+_rotate_ts="$(date '+%Y%m%d-%H%M%S')"
 for hs_err in "${SERVER_DIR}"/hs_err_pid*.log; do
-  [[ -f "${hs_err}" ]] || continue
-  rotated="${hs_err%.log}_$(date '+%Y%m%d-%H%M%S').log"
+  rotated="${hs_err%.log}_${_rotate_ts}.log"
   mv "${hs_err}" "${rotated}"
-  log "Rotated crash dump: $(basename "${hs_err}") -> $(basename "${rotated}")"
+  log "Rotated crash dump: $(basename "${hs_err}" .log)_${_rotate_ts}.log"
 done
+shopt -u nullglob
+unset _rotate_ts
 
 # Launch server
 cd "${SERVER_DIR}/${GAME_WORKING_DIR}"

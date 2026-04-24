@@ -25,7 +25,6 @@ SandboxVars = {
     CompostTime = 2,
     StatsDecrease = 3,
     NatureAbundance = 3,
-    Alarm = 4,
     StarterKit = false,
     Nutrition = true,
     FoodRotSpeed = 3,
