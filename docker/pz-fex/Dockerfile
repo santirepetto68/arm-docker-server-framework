@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git cmake ninja-build pkg-config \
     clang lld llvm \
     libsdl2-dev libepoxy-dev libssl-dev \
+    qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools \
+    qtdeclarative5-dev qml-module-qtquick2 \
     python3 python3-setuptools nasm python3-clang \
     g++-x86-64-linux-gnu \
     libstdc++-10-dev-i386-cross \
