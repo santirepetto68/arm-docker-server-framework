@@ -40,10 +40,12 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsdl2-2.0-0 libepoxy0 libssl3 \
+    libstdc++6 libgcc-s1 \
+    libsdl2-2.0-0 libepoxy0 libssl3 libzstd1 \
     squashfs-tools squashfuse \
-    curl wget ca-certificates \
+    curl ca-certificates \
     python3 \
+    procps \
     binfmt-support \
     sudo \
     && rm -rf /var/lib/apt/lists/*
