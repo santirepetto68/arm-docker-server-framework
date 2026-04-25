@@ -18,10 +18,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Full clone required — a08a6ce5 is not a tag so --depth 1 won't reach it.
 # --filter=blob:none defers large blobs until needed, reducing initial transfer.
 WORKDIR /build
-RUN git clone --recurse-submodules --filter=blob:none \
-        https://github.com/FEX-Emu/FEX.git && \
+# Clone, checkout the pinned commit, then re-init submodules at that commit
+# (--filter=blob:none on the initial clone leaves submodules with no content
+# until we explicitly re-init them at the checked-out ref).
+RUN git clone --recurse-submodules https://github.com/FEX-Emu/FEX.git && \
     cd FEX && \
     git checkout a08a6ce5de51f5e625357ecaed46c463aa1e3c99 && \
+    git submodule update --init --recursive
+
+# Build + install. The strip is non-fatal (some FEX builds don't produce all
+# expected binaries); the rest must succeed or the layer fails.
+RUN cd /build/FEX && \
     mkdir Build && cd Build && \
     CC=clang CXX=clang++ cmake \
         -DCMAKE_INSTALL_PREFIX=/usr/local/fex \
@@ -33,7 +40,7 @@ RUN git clone --recurse-submodules --filter=blob:none \
         -G Ninja .. && \
     ninja -j$(nproc) && \
     ninja install && \
-    strip /usr/local/fex/bin/* 2>/dev/null || true
+    (strip /usr/local/fex/bin/* 2>/dev/null || true)
 
 # ── Stage 2: runtime ───────────────────────────────────────────────────────────
 FROM ubuntu:22.04
