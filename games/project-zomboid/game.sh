@@ -127,24 +127,34 @@ build_startup_command() {
   # On pz-fex-arm64 (our custom image, /usr/local/fex/bin/) the auto-start
   # also works. Only attempt an explicit pre-launch if FEX_PRELAUNCH_SERVER=1
   # is set, which allows opt-in for images where auto-start fails.
-  if [[ "${FEX_PRELAUNCH_SERVER:-0}" == "1" ]]; then
-    local fexserver=""
-    for cand in /usr/local/fex/bin/FEXServer /usr/bin/FEXServer; do
-      if [[ -x "${cand}" ]]; then fexserver="${cand}"; break; fi
-    done
-    if [[ -n "${fexserver}" ]]; then
-      local fexserver_running=0
-      if command -v pgrep >/dev/null 2>&1; then
-        pgrep -x FEXServer >/dev/null 2>&1 && fexserver_running=1
-      fi
-      if [[ "${fexserver_running}" -eq 0 ]]; then
-        log "Pre-launching ${fexserver}"
-        "${fexserver}" >/dev/null 2>&1 &
-        disown
-        sleep 3
+  # Start FEXServer explicitly. FEXInterpreter requires it running before it
+  # can connect. On teriyakigod/steamcmd:arm64 the auto-launch path is broken
+  # (FEXInterpreter never starts FEXServer itself on this build); on our custom
+  # pz-fex-arm64 image the same explicit launch is needed.
+  local fexserver=""
+  for cand in /usr/local/fex/bin/FEXServer /usr/bin/FEXServer; do
+    if [[ -x "${cand}" ]]; then fexserver="${cand}"; break; fi
+  done
+  if [[ -n "${fexserver}" ]]; then
+    local fexserver_running=0
+    if command -v pgrep >/dev/null 2>&1; then
+      pgrep -x FEXServer >/dev/null 2>&1 && fexserver_running=1
+    fi
+    if [[ "${fexserver_running}" -eq 0 ]]; then
+      log "Starting ${fexserver}"
+      # Capture stderr so startup failures are visible in docker logs.
+      "${fexserver}" 2>&1 | while IFS= read -r line; do log "FEXServer: ${line}"; done &
+      disown
+      sleep 3
+      # Confirm FEXServer socket exists before proceeding.
+      local socket="/tmp/1001.FEXServer.Socket"
+      if [[ ! -S "${socket}" ]]; then
+        log "WARNING: FEXServer socket ${socket} not present after 3s — FEXServer may have crashed"
       else
-        log "FEXServer already running"
+        log "FEXServer socket confirmed: ${socket}"
       fi
+    else
+      log "FEXServer already running"
     fi
   fi
 
