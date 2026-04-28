@@ -133,11 +133,19 @@ build_startup_command() {
     if [[ -x "${cand}" ]]; then fexserver="${cand}"; break; fi
   done
   if [[ -n "${fexserver}" ]]; then
-    if ! pgrep -x FEXServer >/dev/null 2>&1; then
+    # pgrep may not be installed (teriyakigod image lacks procps); treat
+    # a missing pgrep as "not running" and start FEXServer unconditionally.
+    local fexserver_running=0
+    if command -v pgrep >/dev/null 2>&1; then
+      pgrep -x FEXServer >/dev/null 2>&1 && fexserver_running=1
+    fi
+    if [[ "${fexserver_running}" -eq 0 ]]; then
       log "Starting ${fexserver}"
       "${fexserver}" >/dev/null 2>&1 &
       disown
-      sleep 1
+      # Wait for FEXServer to bind its socket before FEXInterpreter tries to
+      # connect. 3s is sufficient on teriyakigod FEX-2310; 1s was too short.
+      sleep 3
     else
       log "FEXServer already running"
     fi
