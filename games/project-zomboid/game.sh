@@ -34,16 +34,15 @@ build_startup_command() {
   log "/opt/fex-rootfs: $([[ -d /opt/fex-rootfs ]] && echo present || echo absent)"
   log "============================"
 
-  # Match the Quinten Q_eggs FEX egg env verbatim. Credit:
-  # github.com/QuintenQVD0/Q_eggs (egg-project-zomboid-a-r-m64.json).
+  # Mirror the env that PZ's stock start-server.sh sets, including jre64/lib
+  # in LD_LIBRARY_PATH and LD_PRELOAD=libjsig.so. libjsig is the JVM's
+  # signal-chaining shim — without it, FEX's signal interception and the
+  # JVM's safepoint/JIT signal handlers fight, which under our custom FEX
+  # build manifests as a wedge during script-loading C2 compilation.
   export HOME="/mnt/server"
   export PATH="/mnt/server/jre64/bin:${PATH}"
-  export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server:/mnt/server/lib:${LD_LIBRARY_PATH:-}"
-
-  # NOTE: libjsig.so preload is intentionally omitted. The host-side jre64/
-  # copy isn't resolvable from FEX's x86_64 ld-linux, and PZ runs fine
-  # without it under FEX. The Quinten egg preloads it because the panel
-  # injects the env line unconditionally, not because it's required.
+  export LD_LIBRARY_PATH="/mnt/server/linux64:/mnt/server/natives:/mnt/server:/mnt/server/jre64/lib:/mnt/server/jre64/lib/server:/mnt/server/lib:${LD_LIBRARY_PATH:-}"
+  export LD_PRELOAD="libjsig.so${LD_PRELOAD:+:${LD_PRELOAD}}"
 
   # FEX rootfs resolution.
   #
