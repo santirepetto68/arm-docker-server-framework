@@ -108,11 +108,18 @@ services:
       - GAME_ID=project-zomboid
       # FEX rootfs resolution order (see games/project-zomboid/game.sh):
       #   1. FEX_ROOTFS_PATH if set to a real dir
-      #   2. image-bundled /opt/fex-rootfs (supersunho/fex-emu has this)
+      #   2. image-bundled /opt/fex-rootfs (pz-fex-arm64 ships Ubuntu 22.04 here)
       #   3. on-demand download to /mnt/server/.fex/RootFS/<distro>
       # FEX_ROOTFS_DISTRO only applies to path 3.
-      - FEX_ROOTFS_DISTRO=${FEX_ROOTFS_DISTRO:-Ubuntu 24.04}
+      - FEX_ROOTFS_DISTRO=${FEX_ROOTFS_DISTRO:-Ubuntu 22.04}
       - FEX_ROOTFS_PATH=${FEX_ROOTFS_PATH:-}
+      # AOT cache: generate translations on first run, reuse on subsequent runs.
+      # Without these PZ does a cold translation pass every boot, which on this
+      # FEX build can wedge during script-loading C2 compilation. The cache is
+      # bind-mounted below so it persists across container recreations.
+      - FEX_AOTIRCAPTURE=1
+      - FEX_AOTIRGENERATE=1
+      - FEX_AOTIRLOAD=1
     ports:
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/udp"
       - "${PZ_SERVER_PORT:-16261}:${PZ_SERVER_PORT:-16261}/tcp"
@@ -130,3 +137,6 @@ services:
       - ./scripts:/project/scripts:ro
       - ./games/project-zomboid:/project/game:ro
       - ./backups:/backups
+      # FEX AOT translation cache. Persisting it across container recreations
+      # is what turns cold-start hangs into one-shot stable boots.
+      - ./data/project-zomboid/.fex-cache:/home/steam/.fex-emu/AOTIRCache
